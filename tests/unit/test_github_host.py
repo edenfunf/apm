@@ -437,6 +437,58 @@ def test_build_ado_bearer_git_env_does_not_url_encode():
     assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Bearer {token}"
 
 
+def test_append_authorization_header_preserves_existing_git_config_entries():
+    """#2368: appending must not reset GIT_CONFIG_COUNT or clobber index 0."""
+    env = {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "safe.bareRepository",
+        "GIT_CONFIG_VALUE_0": "explicit",
+        "GIT_CONFIG_KEY_1": "credential.interactive",
+        "GIT_CONFIG_VALUE_1": "never",
+    }
+    github_host.append_authorization_header_git_env(env, "Bearer", "tok")
+    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_KEY_0"] == "safe.bareRepository"
+    assert env["GIT_CONFIG_VALUE_0"] == "explicit"
+    assert env["GIT_CONFIG_KEY_1"] == "credential.interactive"
+    assert env["GIT_CONFIG_VALUE_1"] == "never"
+    assert env["GIT_CONFIG_KEY_2"] == "http.extraheader"
+    assert env["GIT_CONFIG_VALUE_2"] == "Authorization: Bearer tok"
+
+
+def test_append_authorization_header_on_empty_base_matches_build_helper():
+    """Without prior entries, append degenerates to the build overlay."""
+    env = {"OTHER": "1"}
+    github_host.append_authorization_header_git_env(env, "Basic", "dXNlcjpwYXNz")
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+    assert env["GIT_CONFIG_VALUE_0"] == "Authorization: Basic dXNlcjpwYXNz"
+    assert env["OTHER"] == "1"
+
+
+def test_append_authorization_header_tolerates_blank_or_invalid_count():
+    """Empty or non-numeric GIT_CONFIG_COUNT is treated as zero entries."""
+    for bad_count in ("", "not-a-number", "-3"):
+        env = {"GIT_CONFIG_COUNT": bad_count}
+        github_host.append_authorization_header_git_env(env, "Bearer", "tok")
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+
+
+def test_append_ado_bearer_git_env_delegates_with_bearer_scheme():
+    """ADO append wrapper mirrors build_ado_bearer_git_env semantics."""
+    env = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.bareRepository",
+        "GIT_CONFIG_VALUE_0": "explicit",
+    }
+    github_host.append_ado_bearer_git_env(env, "aad-jwt")
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "safe.bareRepository"
+    assert env["GIT_CONFIG_KEY_1"] == "http.extraheader"
+    assert env["GIT_CONFIG_VALUE_1"] == "Authorization: Bearer aad-jwt"
+
+
 def test_unsupported_host_error_with_context():
     """Test that context message is included when provided."""
     error_msg = github_host.unsupported_host_error(

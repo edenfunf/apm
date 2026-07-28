@@ -490,6 +490,46 @@ def build_ado_bearer_git_env(bearer_token: str) -> dict:
     return build_authorization_header_git_env("Bearer", bearer_token)
 
 
+def append_authorization_header_git_env(env: dict, scheme: str, credential: str) -> None:
+    """Append an Authorization ``http.extraheader`` entry to *env* in place.
+
+    :func:`build_authorization_header_git_env` returns an overlay whose
+    ``GIT_CONFIG_COUNT`` is hardcoded to ``"1"``.  Dict-merging that overlay
+    onto a base env that already carries indexed git config entries
+    (``GIT_CONFIG_COUNT=N`` with keys ``0..N-1``) resets the count and
+    overwrites index 0, silently dropping retained entries such as
+    ``safe.bareRepository=explicit`` or ``credential.interactive=never``
+    (#2368).  This variant appends the header at the next free index so
+    the existing config set survives.
+
+    Args:
+        env: The subprocess env dict to mutate (base env already merged in).
+        scheme: HTTP auth scheme, e.g. ``"Bearer"`` or ``"Basic"``.
+        credential: The credential value (token or base64-encoded user:pass).
+
+    Note:
+        Callers MUST NOT log *env* afterwards.  The appended
+        ``GIT_CONFIG_VALUE_N`` contains the credential.
+    """
+    try:
+        count = max(0, int(env.get("GIT_CONFIG_COUNT", "0") or "0"))
+    except ValueError:
+        count = 0
+    env["GIT_CONFIG_COUNT"] = str(count + 1)
+    env[f"GIT_CONFIG_KEY_{count}"] = "http.extraheader"
+    env[f"GIT_CONFIG_VALUE_{count}"] = f"Authorization: {scheme} {credential}"
+
+
+def append_ado_bearer_git_env(env: dict, bearer_token: str) -> None:
+    """Append an ADO AAD bearer Authorization header to *env* in place.
+
+    Append-variant of :func:`build_ado_bearer_git_env`; see
+    :func:`append_authorization_header_git_env` for why appending (rather
+    than replacing) the ``GIT_CONFIG_*`` set matters.
+    """
+    append_authorization_header_git_env(env, "Bearer", bearer_token)
+
+
 # Single source of truth for the ADO auth-failure signal set.
 #
 # Historically these signal strings were open-coded across 3+ call sites
