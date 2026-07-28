@@ -464,6 +464,12 @@ def build_authorization_header_git_env(scheme: str, credential: str) -> dict:
     Note:
         Callers MUST NOT log the returned dict.  ``GIT_CONFIG_VALUE_0``
         contains the credential.
+
+    Warning:
+        Do NOT dict-merge this overlay onto an env that may already carry
+        indexed ``GIT_CONFIG_*`` entries -- the hardcoded count resets the
+        set and clobbers index 0 (#2368).  Use
+        :func:`set_authorization_header_git_env` for that case.
     """
     return {
         "GIT_CONFIG_COUNT": "1",
@@ -490,17 +496,24 @@ def build_ado_bearer_git_env(bearer_token: str) -> dict:
     return build_authorization_header_git_env("Bearer", bearer_token)
 
 
-def append_authorization_header_git_env(env: dict, scheme: str, credential: str) -> None:
-    """Append an Authorization ``http.extraheader`` entry to *env* in place.
+def set_authorization_header_git_env(env: dict, scheme: str, credential: str) -> None:
+    """Make ``Authorization: <scheme> <credential>`` the sole auth header in *env*.
 
     :func:`build_authorization_header_git_env` returns an overlay whose
     ``GIT_CONFIG_COUNT`` is hardcoded to ``"1"``.  Dict-merging that overlay
     onto a base env that already carries indexed git config entries
     (``GIT_CONFIG_COUNT=N`` with keys ``0..N-1``) resets the count and
-    overwrites index 0, silently dropping retained entries such as
-    ``safe.bareRepository=explicit`` or ``credential.interactive=never``
-    (#2368).  This variant appends the header at the next free index so
-    the existing config set survives.
+    overwrites index 0, silently dropping non-auth entries such as
+    ``safe.bareRepository=explicit`` or ``http.sslCAInfo`` (#2368).
+
+    This helper instead rewrites the indexed set in place: existing
+    auth-channel entries (any ``*extraheader*`` key, or a value containing
+    ``authorization`` -- the same policy as
+    ``AuthResolver._clear_git_auth_env``) are removed so layered callers
+    cannot stack duplicate Authorization headers, every other entry is
+    preserved, and the new header is appended at the end.  Orphaned
+    ``GIT_CONFIG_KEY_/VALUE_`` entries at or beyond the count are also
+    dropped so no stale credential lingers in the child-process env table.
 
     Args:
         env: The subprocess env dict to mutate (base env already merged in).
@@ -515,19 +528,32 @@ def append_authorization_header_git_env(env: dict, scheme: str, credential: str)
         count = max(0, int(env.get("GIT_CONFIG_COUNT", "0") or "0"))
     except ValueError:
         count = 0
-    env["GIT_CONFIG_COUNT"] = str(count + 1)
-    env[f"GIT_CONFIG_KEY_{count}"] = "http.extraheader"
-    env[f"GIT_CONFIG_VALUE_{count}"] = f"Authorization: {scheme} {credential}"
+    retained: list[tuple[str, str]] = []
+    for index in range(count):
+        key = env.get(f"GIT_CONFIG_KEY_{index}", "")
+        value = env.get(f"GIT_CONFIG_VALUE_{index}", "")
+        if "extraheader" in key.lower() or "authorization" in value.lower():
+            continue
+        if key:
+            retained.append((key, value))
+    for key in tuple(env):
+        if key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            env.pop(key, None)
+    retained.append(("http.extraheader", f"Authorization: {scheme} {credential}"))
+    env["GIT_CONFIG_COUNT"] = str(len(retained))
+    for index, (key, value) in enumerate(retained):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
 
 
-def append_ado_bearer_git_env(env: dict, bearer_token: str) -> None:
-    """Append an ADO AAD bearer Authorization header to *env* in place.
+def set_ado_bearer_git_env(env: dict, bearer_token: str) -> None:
+    """Set an ADO AAD bearer Authorization header on *env* in place.
 
-    Append-variant of :func:`build_ado_bearer_git_env`; see
-    :func:`append_authorization_header_git_env` for why appending (rather
-    than replacing) the ``GIT_CONFIG_*`` set matters.
+    In-place variant of :func:`build_ado_bearer_git_env`; see
+    :func:`set_authorization_header_git_env` for why rewriting (rather
+    than dict-merging) the ``GIT_CONFIG_*`` set matters.
     """
-    append_authorization_header_git_env(env, "Bearer", bearer_token)
+    set_authorization_header_git_env(env, "Bearer", bearer_token)
 
 
 # Single source of truth for the ADO auth-failure signal set.

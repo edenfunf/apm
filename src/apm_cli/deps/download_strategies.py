@@ -26,7 +26,6 @@ from ..core.auth import AuthResolver, HostInfo
 from ..models.apm_package import DependencyReference
 from ..utils.archive import ArchiveError, safe_extract_zip
 from ..utils.github_host import (
-    append_authorization_header_git_env,
     build_ado_api_url,
     build_artifactory_archive_url,
     build_https_clone_url,
@@ -34,6 +33,7 @@ from ..utils.github_host import (
     build_ssh_url,
     default_host,
     is_github_hostname,
+    set_authorization_header_git_env,
 )
 from ..utils.path_security import PathTraversalError
 from .git_file_transport import (
@@ -752,7 +752,7 @@ class DownloadDelegate:
             # GitHub credential into Git's header channel so the token remains
             # out of the remote URL and is actually consumed by git.
             git_env = dict(auth_ctx.git_env)
-            append_authorization_header_git_env(git_env, "Bearer", auth_ctx.token)
+            set_authorization_header_git_env(git_env, "Bearer", auth_ctx.token)
             git_env.pop("GIT_TOKEN", None)
             auth_scheme = "basic"
         else:
