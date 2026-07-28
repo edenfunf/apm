@@ -117,6 +117,19 @@ def test_ado_auth_header_bearer_detected_from_git_env() -> None:
     assert _ado_auth_header("jwt-xyz", git_env) == {"Authorization": "Bearer jwt-xyz"}
 
 
+def test_ado_auth_header_bearer_detected_at_any_config_index() -> None:
+    """#2368: the bearer header is appended after retained entries, so the
+    scheme sniff must scan every GIT_CONFIG_VALUE_ slot, not just index 0."""
+    git_env = {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "http.sslCAInfo",
+        "GIT_CONFIG_VALUE_0": "/corporate/ca.pem",
+        "GIT_CONFIG_KEY_1": "http.extraheader",
+        "GIT_CONFIG_VALUE_1": "Authorization: Bearer jwt-xyz",
+    }
+    assert _ado_auth_header("jwt-xyz", git_env) == {"Authorization": "Bearer jwt-xyz"}
+
+
 # ---------------------------------------------------------------------------
 # _fetch_ado -- REST fast path
 # ---------------------------------------------------------------------------

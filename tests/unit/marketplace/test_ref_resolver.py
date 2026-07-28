@@ -792,9 +792,15 @@ class TestRefResolverTokenInjection:
         assert parsed.hostname == "dev.azure.com"
         assert parsed.username is None
         env = mock_run.call_args.kwargs["env"]
-        assert env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+        # Header index is not fixed (#2368: appended after retained entries),
+        # so locate it instead of assuming slot 0.
         expected = base64.b64encode(b":ado_pat").decode()
-        assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {expected}"
+        headers = [
+            (env[f"GIT_CONFIG_KEY_{i}"], v)
+            for i in range(int(env["GIT_CONFIG_COUNT"]))
+            if "Authorization" in (v := env[f"GIT_CONFIG_VALUE_{i}"])
+        ]
+        assert headers == [("http.extraheader", f"Authorization: Basic {expected}")]
 
     def test_ado_ssh_transport_skips_bearer_retry(self) -> None:
         """SSH transport never retries an ADO PAT as an HTTP bearer flow."""
