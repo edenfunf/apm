@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Injecting an HTTP `Authorization` header into a git subprocess no longer
+  discards inherited `GIT_CONFIG_*` entries. The header overlay hardcoded
+  `GIT_CONFIG_COUNT=1`, so merging it dropped retained hardening such as
+  `safe.bareRepository=explicit` and a corporate `http.sslCAInfo` pin on every
+  clone, download, and marketplace `ls-remote`. (by @edenfunf, #2368)
+
 - `apm install --dry-run` no longer lists the project's own `includes: auto`
   self-managed files under "Files that would be removed"; the orphan preview
   now excludes the synthesized lockfile self-entry, matching the real install
