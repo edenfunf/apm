@@ -1,4 +1,4 @@
-"""Focused contracts for the virtual-file GitHub throttle fallback."""
+﻿"""Focused contracts for the virtual-file GitHub throttle fallback."""
 
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ def test_private_fallback_uses_only_auth_resolver_git_environment() -> None:
     assert url.call_args.kwargs["token"] == ""
 
 
-def test_private_fallback_appends_header_after_retained_git_config() -> None:
+def test_private_fallback_sets_header_after_retained_git_config() -> None:
     """#2368: the auth header must not clobber retained GIT_CONFIG entries."""
     host = _host(token="private-token")
     host.auth_resolver.resolve_for_dep.return_value.git_env = {

@@ -1,4 +1,4 @@
-"""Focused contracts for CloneEngine's ADO bearer-retry env construction (#2368)."""
+﻿"""Focused contracts for CloneEngine's ADO bearer-retry env construction (#2368)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _ado_host(git_env: dict) -> MagicMock:
     return host
 
 
-def test_bearer_retry_appends_header_preserving_retained_git_config(tmp_path: Path) -> None:
+def test_bearer_retry_sets_header_preserving_retained_git_config(tmp_path: Path) -> None:
     """#2368: the bearer retry env must append the Authorization header at the
     next free GIT_CONFIG index instead of resetting the count and clobbering
     retained hardening entries (safe.bareRepository etc.) from the base env."""

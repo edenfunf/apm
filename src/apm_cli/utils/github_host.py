@@ -496,7 +496,7 @@ def build_ado_bearer_git_env(bearer_token: str) -> dict:
     return build_authorization_header_git_env("Bearer", bearer_token)
 
 
-def set_authorization_header_git_env(env: dict, scheme: str, credential: str) -> None:
+def set_authorization_header_git_env(env: dict[str, str], scheme: str, credential: str) -> None:
     """Make ``Authorization: <scheme> <credential>`` the sole auth header in *env*.
 
     :func:`build_authorization_header_git_env` returns an overlay whose
@@ -546,7 +546,7 @@ def set_authorization_header_git_env(env: dict, scheme: str, credential: str) ->
         env[f"GIT_CONFIG_VALUE_{index}"] = value
 
 
-def set_ado_bearer_git_env(env: dict, bearer_token: str) -> None:
+def set_ado_bearer_git_env(env: dict[str, str], bearer_token: str) -> None:
     """Set an ADO AAD bearer Authorization header on *env* in place.
 
     In-place variant of :func:`build_ado_bearer_git_env`; see
