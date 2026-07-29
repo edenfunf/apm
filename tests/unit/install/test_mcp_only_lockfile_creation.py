@@ -92,6 +92,87 @@ class TestLockfileCreatedForMcpOnlyProject(_ProjectCase):
         self.assertTrue(self.lock_path.exists())
 
 
+class TestFullAuditBaselinePasses(unittest.TestCase):
+    """The acceptance criterion is `apm audit --ci`, not one check in isolation.
+
+    Asserting only ``lockfile-exists`` would let the fix move the failure to
+    the next check -- the user would still be told to run ``apm install``
+    immediately after a successful one.
+    """
+
+    SELF_DEFINED_APM_YML = """\
+name: jira
+version: 1.0.0
+description: Self-defined MCP server
+targets:
+  - copilot
+dependencies:
+  mcp:
+    - name: my-server
+      command: node
+      args: ["server.js"]
+"""
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "apm.yml").write_text(self.SELF_DEFINED_APM_YML, encoding="utf-8")
+        self.manifest = APMPackage.from_apm_yml(self.root / "apm.yml")
+        self.lock_path = get_lockfile_path(self.root)
+
+    def _derived_configs(self) -> dict:
+        """Derive configs the way ``run_mcp_integration`` does.
+
+        Both it and the audit's config-consistency check go through
+        ``CurrentMcpConfigView``, so persisting anything else would pass this
+        test while leaving a real install inconsistent.
+        """
+        from apm_cli.constants import APM_MODULES_DIR
+        from apm_cli.integration.mcp_config_view import CurrentMcpConfigView
+
+        view = CurrentMcpConfigView.derive(
+            self.manifest,
+            None,
+            self.root / APM_MODULES_DIR,
+            trust_transitive_self_defined=True,
+        )
+        return dict(view.configs)
+
+    def _run_audit(self):
+        from apm_cli.policy.ci_checks import run_baseline_checks
+
+        return run_baseline_checks(self.root, fail_fast=False, ci_mode=True)
+
+    def test_audit_fails_before_install(self):
+        result = self._run_audit()
+        self.assertFalse(result.passed, "fixture sanity: audit must fail without a lockfile")
+
+    def test_every_baseline_check_passes_after_install(self):
+        configs = self._derived_configs()
+        MCPIntegrator.update_lockfile(
+            set(configs),
+            self.lock_path,
+            mcp_configs=configs,
+            mcp_target_servers={"copilot": sorted(configs)},
+            mcp_config_provenance={},
+        )
+
+        result = self._run_audit()
+        failed = [f"{c.name}: {c.message}" for c in result.checks if not c.passed]
+        self.assertEqual(failed, [], f"audit must be clean after install; failures: {failed}")
+        self.assertTrue(result.passed)
+
+    def test_single_server_install_shape_also_passes(self):
+        """`apm install mcp <server>` persists configs without target servers."""
+        configs = self._derived_configs()
+        MCPIntegrator.update_lockfile(set(configs), self.lock_path, mcp_configs=configs)
+
+        result = self._run_audit()
+        failed = [f"{c.name}: {c.message}" for c in result.checks if not c.passed]
+        self.assertEqual(failed, [], f"audit must be clean; failures: {failed}")
+
+
 class TestNoLockfileConjuredWithoutState(_ProjectCase):
     def test_clearing_the_last_server_does_not_create_a_lockfile(self):
         """Removing MCP state from a project that never had a lockfile is a no-op."""
