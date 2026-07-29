@@ -92,6 +92,34 @@ class TestLockfileCreatedForMcpOnlyProject(_ProjectCase):
         self.assertTrue(self.lock_path.exists())
 
 
+class TestLegacyLockfileIsMigratedFirst(_ProjectCase):
+    """`apm install --mcp` must not shadow a legacy ``apm.lock``.
+
+    Creating ``apm.lock.yaml`` before the rename would make
+    ``migrate_lockfile_if_needed`` skip it forever, dropping the legacy
+    file's pinned dependencies.
+    """
+
+    def test_legacy_lockfile_is_renamed_before_the_path_is_resolved(self):
+        from apm_cli.deps.lockfile import LEGACY_LOCKFILE_NAME, migrate_lockfile_if_needed
+
+        legacy = self.root / LEGACY_LOCKFILE_NAME
+        lock = LockFile(apm_version="0.0.1-test")
+        lock.save(legacy)
+        self.assertTrue(legacy.exists())
+
+        # What run_mcp_install now does before resolving the lock path.
+        migrate_lockfile_if_needed(self.root)
+
+        self.assertTrue(self.lock_path.exists(), "legacy lockfile must be migrated")
+        self.assertFalse(legacy.exists(), "legacy lockfile must not linger")
+
+        # Persisting MCP state afterwards updates the migrated file rather
+        # than creating a second one.
+        self._persist()
+        self.assertEqual(LockFile.read(self.lock_path).mcp_servers, [SERVER])
+
+
 class TestFullAuditBaselinePasses(unittest.TestCase):
     """The acceptance criterion is `apm audit --ci`, not one check in isolation.
 
@@ -109,6 +137,8 @@ targets:
 dependencies:
   mcp:
     - name: my-server
+      registry: false
+      transport: stdio
       command: node
       args: ["server.js"]
 """

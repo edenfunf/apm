@@ -38,6 +38,7 @@ from apm_cli.utils.console import (
     _rich_error,
     _rich_info,
     _rich_success,
+    _rich_warning,
 )
 
 _log = logging.getLogger(__name__)
@@ -835,6 +836,16 @@ class MCPIntegrator:
                 lock_path,
                 exc_info=True,
             )
+            if creating:
+                # Failing to UPDATE leaves a usable lockfile behind, but failing
+                # to CREATE one reproduces #2373 exactly -- install reports
+                # success and the next audit says "run 'apm install'". Debug
+                # level would hide the fix silently not applying.
+                _rich_warning(
+                    f"Could not write {lock_path.name}; 'apm audit' will report it as "
+                    "missing. Check the directory is writable and re-run 'apm install'.",
+                    symbol="warning",
+                )
 
     # ------------------------------------------------------------------
     # Runtime detection
