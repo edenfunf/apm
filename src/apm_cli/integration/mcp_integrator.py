@@ -43,6 +43,16 @@ from apm_cli.utils.console import (
 _log = logging.getLogger(__name__)
 
 
+def _installed_apm_version() -> str:
+    """Return the running APM version, mirroring ``LockFile.from_installed_packages``."""
+    try:
+        from importlib.metadata import version
+
+        return version("apm-cli")
+    except Exception:
+        return "unknown"
+
+
 def _is_vscode_available(project_root: Path | str | None = None) -> bool:
     """Return True when VS Code can be targeted for MCP configuration.
 
@@ -765,13 +775,26 @@ class MCPIntegrator:
         """
         if lock_path is None:
             lock_path = get_lockfile_path(Path.cwd())
-        if not lock_path.exists():
+        # A project whose apm.yml declares only MCP dependencies never enters
+        # the APM install pipeline, so nothing else creates apm.lock.yaml --
+        # yet `apm audit` counts MCP dependencies when deciding a lockfile is
+        # required, and failed with "run 'apm install'" right after a
+        # successful install (#2373). Establish the lockfile here when there
+        # is MCP state to record. Calls that clear the last server keep the
+        # early return: they must not conjure a lockfile for a project that
+        # never had one.
+        creating = not lock_path.exists()
+        if creating and not (mcp_server_names or mcp_configs):
             return
         try:
-            existing_lockfile = LockFile.read(lock_path)
-            if existing_lockfile is None:
+            existing_lockfile = None if creating else LockFile.read(lock_path)
+            if existing_lockfile is None and not creating:
                 return
-            lockfile = copy.deepcopy(existing_lockfile)
+            lockfile = (
+                LockFile(apm_version=_installed_apm_version())
+                if existing_lockfile is None
+                else copy.deepcopy(existing_lockfile)
+            )
             lockfile.mcp_servers = sorted(mcp_server_names)
             if mcp_configs is not None:
                 lockfile.mcp_configs = mcp_configs
@@ -799,7 +822,9 @@ class MCPIntegrator:
                     for name, pkg in lockfile.mcp_config_provenance.items()
                     if name in lockfile.mcp_configs
                 }
-            if lockfile.is_semantically_equivalent(existing_lockfile):
+            if existing_lockfile is not None and lockfile.is_semantically_equivalent(
+                existing_lockfile
+            ):
                 _log.debug("MCP lockfile unchanged -- skipping write")
                 return
             lockfile.generated_at = datetime.now(timezone.utc).isoformat()
