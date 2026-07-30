@@ -207,7 +207,56 @@ def test_frozen_dedicated_mcp_add_fails_before_manifest_or_config_write(
     )
 
     assert result.returncode != 0
-    assert "--frozen cannot be combined with --mcp" in result.stdout
+    assert "--frozen cannot be combined with --mcp" in result.stdout + result.stderr
+    _assert_same_state(before, _snapshot(project))
+    assert_unchanged(cache_before, ArtifactSnapshot.capture(isolated.cache_root))
+
+
+def test_frozen_local_bundle_fails_before_deployment_or_lock_write(
+    tmp_path: Path,
+    apm_binary_path: Path,
+) -> None:
+    isolated, environment, project, runner = _scenario(
+        tmp_path / "local-bundle",
+        apm_binary_path,
+        with_mcp=False,
+    )
+    bundle = isolated.package_root / "fixture-bundle"
+    bundle.mkdir()
+    (bundle / "plugin.json").write_text(
+        json.dumps({"id": "fixture-bundle", "name": "Fixture Bundle"}),
+        encoding="ascii",
+    )
+    dump_yaml(
+        {
+            "pack": {
+                "format": "plugin",
+                "target": "cursor",
+                "bundle_files": {},
+            },
+            "dependencies": [],
+        },
+        bundle / "apm.lock.yaml",
+    )
+    before = _snapshot(project)
+    cache_before = ArtifactSnapshot.capture(isolated.cache_root)
+
+    result = runner.run(
+        (
+            "install",
+            str(bundle),
+            "--frozen",
+            "--target",
+            "cursor",
+            "--no-policy",
+        ),
+        scenario_id="frozen-local-bundle",
+        cwd=project.root,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "--frozen cannot be combined with positional packages" in (result.stdout + result.stderr)
     _assert_same_state(before, _snapshot(project))
     assert_unchanged(cache_before, ArtifactSnapshot.capture(isolated.cache_root))
 

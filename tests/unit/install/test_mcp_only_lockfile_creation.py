@@ -96,6 +96,7 @@ class TestLockfileCreatedForMcpOnlyProject(_ProjectCase):
         with (
             patch.object(LockFile, "save", side_effect=OSError("read-only")),
             patch("apm_cli.integration.mcp_integrator._rich_warning") as warning,
+            self.assertRaises(OSError),
         ):
             self._persist()
 

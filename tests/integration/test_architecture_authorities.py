@@ -95,6 +95,9 @@ def test_frozen_install_decisions_have_single_owner() -> None:
     assert adapter.index("InstallService.reject_missing_frozen_root(") < adapter.index(
         "_root_redirect = install_root_redirect("
     )
+    assert adapter.index("InstallService.reject_frozen_mutation(") < adapter.index(
+        "if len(packages) == 1 and not mcp_name"
+    )
     assert "Frozen install decisions must route through InstallService before mutation" in guard
 
 def test_hook_rewrite_scope_has_single_owner() -> None:

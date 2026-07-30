@@ -959,6 +959,8 @@ root_redirect_line=$(grep -n '_root_redirect = install_root_redirect(' "$frozen_
     | head -1 | cut -d: -f1)
 dedicated_mcp_line=$(grep -n '^[[:space:]]*_handle_mcp_install(' "$frozen_adapter" \
     | tail -1 | cut -d: -f1)
+local_bundle_line=$(grep -n 'if len(packages) == 1 and not mcp_name' "$frozen_adapter" \
+    | head -1 | cut -d: -f1)
 frozen_duplicate_hits=$(
     grep -rEn --include='*.py' 'raise FrozenInstallError' src/apm_cli \
         | grep -v "^${frozen_owner}:" \
@@ -976,7 +978,9 @@ if ! grep -q '^    def enforce_frozen(' "$frozen_owner" \
     || [ -z "$root_redirect_line" ] \
     || [ "$frozen_root_guard_line" -ge "$root_redirect_line" ] \
     || [ -z "$dedicated_mcp_line" ] \
+    || [ -z "$local_bundle_line" ] \
     || [ "$frozen_add_guard_line" -ge "$dedicated_mcp_line" ] \
+    || [ "$frozen_add_guard_line" -ge "$local_bundle_line" ] \
     || [ -n "$frozen_duplicate_hits" ]; then
     echo "[x] Frozen install decisions must route through InstallService before mutation"
     [ -n "$frozen_duplicate_hits" ] && echo "$frozen_duplicate_hits"

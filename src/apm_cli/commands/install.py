@@ -1166,6 +1166,15 @@ def install(  # noqa: PLR0913
     logger = None
     command_result: InstallResult | None = None
     transaction: InstallTransaction | None = None
+    from ..install.service import InstallService
+
+    try:
+        if mcp_name is not None:
+            InstallService.reject_frozen_mutation(frozen, "--mcp")
+        elif packages:
+            InstallService.reject_frozen_mutation(frozen, "positional packages")
+    except FrozenInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
     if frozen and update:
         raise click.UsageError(
             "--frozen and --update are mutually exclusive. "
@@ -1184,7 +1193,6 @@ def install(  # noqa: PLR0913
         raise click.UsageError("--root is not valid with --global (user scope)")
     from ..core.install_audit import resolve_audit_override_from_cli
     from ..install.root_redirect import install_root_redirect
-    from ..install.service import InstallService
 
     try:
         audit_override = resolve_audit_override_from_cli(no_audit, audit_mode)
@@ -1341,11 +1349,6 @@ def install(  # noqa: PLR0913
             any_transport_flag=use_ssh or use_https or allow_protocol_fallback,
             registry_url=validated_registry_url,
         )
-        if mcp_name is not None:
-            InstallService.reject_frozen_mutation(frozen, "--mcp")
-        elif pre_dash_packages:
-            InstallService.reject_frozen_mutation(frozen, "package arguments")
-
         # Normalize --skill: '*' means all (same as absent). Reject with --mcp.
         if skill_names and mcp_name is not None:
             raise click.UsageError("--skill cannot be combined with --mcp.")
@@ -1652,7 +1655,14 @@ def install(  # noqa: PLR0913
 
 def _frozen_install_tip(error: FrozenInstallError) -> str:
     """Return recovery guidance tailored to package or MCP lock drift."""
-    if any("MCP server" in reason for reason in error.reasons):
+    has_mcp_drift = any("MCP server" in reason for reason in error.reasons)
+    has_package_drift = any("MCP server" not in reason for reason in error.reasons)
+    if has_mcp_drift and has_package_drift:
+        return (
+            "Tip: run 'apm outdated' to inspect package drift, then run "
+            "'apm install' without --frozen to repair package and MCP lock state."
+        )
+    if has_mcp_drift:
         return "Tip: run 'apm install' without --frozen to create or repair MCP lock state."
     return "Tip: run 'apm outdated' to see what changed, then 'apm update'."
 

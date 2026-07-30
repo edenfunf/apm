@@ -752,7 +752,7 @@ class MCPIntegrator:
         mcp_configs: builtins.dict | None = None,
         mcp_target_servers: builtins.dict | None = None,
         mcp_config_provenance: builtins.dict | None = None,
-        logger=None,
+        logger: CommandLogger | None = None,
     ) -> None:
         """Update the lockfile with the current set of APM-managed MCP server names.
 
@@ -846,6 +846,7 @@ class MCPIntegrator:
                     logger.warning(message)
                 else:
                     _rich_warning(message, symbol="warning")
+                raise
 
     # ------------------------------------------------------------------
     # Runtime detection
