@@ -1688,7 +1688,7 @@ def _install_apm_packages(ctx, outcome):
     all_apm_deps = list(apm_deps) + list(dev_apm_deps)
     _check_insecure_dependencies(all_apm_deps, ctx.allow_insecure, logger)
 
-    if ctx.frozen:
+    if ctx.frozen is True:
         from apm_cli.install.request import InstallRequest
         from apm_cli.install.service import InstallService
 

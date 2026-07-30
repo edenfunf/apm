@@ -40,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Projects that declare only MCP servers now install and audit cleanly on the
   first try. Normal install creates `apm.lock.yaml` with the resolved MCP
   state; frozen install fails without writing when that state is missing or
-  stale. (by @edenfunf, #2373)
+  stale. The matching `openapm-v0.1.md` frozen-install requirement now covers
+  MCP state and all durable writes. (by @edenfunf, #2373)
 
 - `apm install --dry-run` no longer lists the project's own `includes: auto`
   self-managed files under "Files that would be removed"; the orphan preview
