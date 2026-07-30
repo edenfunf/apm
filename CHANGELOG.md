@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes one, so `apm audit` failed with "Lockfile missing -- run 'apm
   install'" immediately after a successful install, and the resolved MCP
   servers went unpinned. (by @edenfunf, #2373)
+- Projects that declare only MCP servers now install and audit cleanly on the
+  first try. Normal install creates `apm.lock.yaml` with the resolved MCP
+  state; frozen install fails without writing when that state is missing or
+  stale. (by @edenfunf, #2373)
 
 - `apm install --dry-run` no longer lists the project's own `includes: auto`
   self-managed files under "Files that would be removed"; the orphan preview

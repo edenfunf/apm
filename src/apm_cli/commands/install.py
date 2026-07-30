@@ -1331,6 +1331,12 @@ def install(  # noqa: PLR0913
             any_transport_flag=use_ssh or use_https or allow_protocol_fallback,
             registry_url=validated_registry_url,
         )
+        from ..install.service import InstallService
+
+        if mcp_name is not None:
+            InstallService.reject_frozen_mutation(frozen, "--mcp")
+        elif pre_dash_packages:
+            InstallService.reject_frozen_mutation(frozen, "package arguments")
 
         # Normalize --skill: '*' means all (same as absent). Reject with --mcp.
         if skill_names and mcp_name is not None:
@@ -1682,6 +1688,19 @@ def _install_apm_packages(ctx, outcome):
     all_apm_deps = list(apm_deps) + list(dev_apm_deps)
     _check_insecure_dependencies(all_apm_deps, ctx.allow_insecure, logger)
 
+    if ctx.frozen:
+        from apm_cli.install.request import InstallRequest
+        from apm_cli.install.service import InstallService
+
+        InstallService.enforce_frozen(
+            InstallRequest(
+                apm_package=apm_package,
+                frozen=True,
+                scope=ctx.scope,
+                trust_transitive_mcp=ctx.trust_transitive_mcp,
+            )
+        )
+
     # Determine what to install based on install mode
     should_install_apm = ctx.install_mode != InstallMode.MCP
     should_install_mcp = ctx.install_mode != InstallMode.APM
@@ -1796,6 +1815,7 @@ def _install_apm_packages(ctx, outcome):
                 no_policy=ctx.no_policy,
                 audit_override=ctx.audit_override,
                 legacy_skill_paths=ctx.legacy_skill_paths,
+                trust_transitive_mcp=ctx.trust_transitive_mcp,
                 frozen=ctx.frozen,
                 plan_callback=ctx.plan_callback,
                 skill_subset=ctx.skill_subset,
@@ -2001,6 +2021,7 @@ def _install_apm_dependencies(  # noqa: PLR0913
     skill_subset: "builtins.tuple | None" = None,
     skill_subset_from_cli: bool = False,
     legacy_skill_paths: bool = False,
+    trust_transitive_mcp: bool = False,
     frozen: bool = False,
     plan_callback=None,
     refresh: bool = False,
@@ -2042,6 +2063,7 @@ def _install_apm_dependencies(  # noqa: PLR0913
         skill_subset=skill_subset,
         skill_subset_from_cli=skill_subset_from_cli,
         legacy_skill_paths=legacy_skill_paths,
+        trust_transitive_mcp=trust_transitive_mcp,
         frozen=frozen,
         plan_callback=plan_callback,
         refresh=refresh,

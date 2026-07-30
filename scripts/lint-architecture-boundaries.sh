@@ -944,6 +944,41 @@ if [ "$self_update_owner_defs" -ne 2 ] \
     violations=$((violations + 1))
 fi
 
+echo "[*] AC24: frozen install decision authority"
+frozen_owner="src/apm_cli/install/service.py"
+frozen_adapter="src/apm_cli/commands/install.py"
+frozen_preflight_line=$(grep -n 'InstallService\.enforce_frozen(' "$frozen_adapter" \
+    | head -1 | cut -d: -f1)
+frozen_migration_line=$(grep -n 'migrate_lockfile_if_needed(ctx\.apm_dir)' "$frozen_adapter" \
+    | head -1 | cut -d: -f1)
+frozen_add_guard_line=$(grep -n 'InstallService\.reject_frozen_mutation(' "$frozen_adapter" \
+    | head -1 | cut -d: -f1)
+dedicated_mcp_line=$(grep -n '^[[:space:]]*_handle_mcp_install(' "$frozen_adapter" \
+    | tail -1 | cut -d: -f1)
+frozen_duplicate_hits=$(
+    grep -rEn --include='*.py' 'raise FrozenInstallError' src/apm_cli \
+        | grep -v "^${frozen_owner}:" \
+        | grep -v 'architecture-authority-exempt:' \
+        || true
+)
+if ! grep -q '^    def enforce_frozen(' "$frozen_owner" \
+    || ! grep -q '^    def reject_frozen_mutation(' "$frozen_owner" \
+    || [ -z "$frozen_preflight_line" ] \
+    || [ -z "$frozen_migration_line" ] \
+    || [ "$frozen_preflight_line" -ge "$frozen_migration_line" ] \
+    || [ -z "$frozen_add_guard_line" ] \
+    || [ -z "$dedicated_mcp_line" ] \
+    || [ "$frozen_add_guard_line" -ge "$dedicated_mcp_line" ] \
+    || [ -n "$frozen_duplicate_hits" ]; then
+    echo "[x] Frozen install decisions must route through InstallService before mutation"
+    [ -n "$frozen_duplicate_hits" ] && echo "$frozen_duplicate_hits"
+    violations=$((violations + 1))
+fi
+
+
+
+
+
 if [ "$violations" -gt 0 ]; then
     echo "[x] $violations architecture boundary rule(s) failed"
     exit 1

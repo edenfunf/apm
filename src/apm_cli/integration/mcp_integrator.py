@@ -24,7 +24,7 @@ import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
 from apm_cli.core.null_logger import NullCommandLogger
-from apm_cli.deps.lockfile import LockFile, get_lockfile_path
+from apm_cli.deps.lockfile import LockFile, get_lockfile_path, installed_apm_version
 from apm_cli.integration.mcp_config_view import (
     _collect_transitive_compat,
     _deduplicate,
@@ -42,16 +42,6 @@ from apm_cli.utils.console import (
 )
 
 _log = logging.getLogger(__name__)
-
-
-def _installed_apm_version() -> str:
-    """Return the running APM version, mirroring ``LockFile.from_installed_packages``."""
-    try:
-        from importlib.metadata import version
-
-        return version("apm-cli")
-    except Exception:
-        return "unknown"
 
 
 def _is_vscode_available(project_root: Path | str | None = None) -> bool:
@@ -756,6 +746,7 @@ class MCPIntegrator:
         mcp_configs: builtins.dict | None = None,
         mcp_target_servers: builtins.dict | None = None,
         mcp_config_provenance: builtins.dict | None = None,
+        logger=None,
     ) -> None:
         """Update the lockfile with the current set of APM-managed MCP server names.
 
@@ -792,7 +783,7 @@ class MCPIntegrator:
             if existing_lockfile is None and not creating:
                 return
             lockfile = (
-                LockFile(apm_version=_installed_apm_version())
+                LockFile(apm_version=installed_apm_version())
                 if existing_lockfile is None
                 else copy.deepcopy(existing_lockfile)
             )
@@ -841,11 +832,14 @@ class MCPIntegrator:
                 # to CREATE one reproduces #2373 exactly -- install reports
                 # success and the next audit says "run 'apm install'". Debug
                 # level would hide the fix silently not applying.
-                _rich_warning(
+                message = (
                     f"Could not write {lock_path.name}; 'apm audit' will report it as "
-                    "missing. Check the directory is writable and re-run 'apm install'.",
-                    symbol="warning",
+                    "missing. Ensure the directory is writable and re-run 'apm install'."
                 )
+                if logger is not None:
+                    logger.warning(message)
+                else:
+                    _rich_warning(message, symbol="warning")
 
     # ------------------------------------------------------------------
     # Runtime detection

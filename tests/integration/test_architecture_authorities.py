@@ -76,6 +76,22 @@ def test_self_update_release_owner_guard_rejects_main_bypass(tmp_path: Path) -> 
     )
 
 
+def test_frozen_install_decisions_have_single_owner() -> None:
+    """Every install path must consult InstallService before mutation."""
+    root = Path(__file__).parents[2]
+    service = (root / "src/apm_cli/install/service.py").read_text(encoding="utf-8")
+    adapter = (root / "src/apm_cli/commands/install.py").read_text(encoding="utf-8")
+    guard = (root / "scripts/lint-architecture-boundaries.sh").read_text(encoding="utf-8")
+
+    assert service.count("def enforce_frozen(") == 1
+    assert service.count("def reject_frozen_mutation(") == 1
+    assert "InstallService.enforce_frozen(" in adapter
+    assert "InstallService.reject_frozen_mutation(" in adapter
+    assert adapter.index("InstallService.enforce_frozen(") < adapter.index(
+        "migrate_lockfile_if_needed(ctx.apm_dir)"
+    )
+    assert "Frozen install decisions must route through InstallService before mutation" in guard
+
 def test_hook_rewrite_scope_has_single_owner() -> None:
     """Native hook paths must consume HookIntegrator's scope decision."""
     root = Path(__file__).parents[2]

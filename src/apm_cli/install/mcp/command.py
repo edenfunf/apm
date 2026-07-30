@@ -149,7 +149,10 @@ def run_mcp_install(  # noqa: PLR0913
                 merged_configs = dict(old_configs)
                 merged_configs.update(new_configs)
                 MCPIntegrator.update_lockfile(
-                    merged_names, _mcp_lock_path, mcp_configs=merged_configs
+                    merged_names,
+                    _mcp_lock_path,
+                    mcp_configs=merged_configs,
+                    logger=logger,
                 )
             except Exception as exc:
                 # Keep the raw exception (which may contain internal paths,
