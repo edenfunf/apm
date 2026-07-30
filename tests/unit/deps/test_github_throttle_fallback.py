@@ -1,4 +1,4 @@
-﻿"""Focused contracts for the virtual-file GitHub throttle fallback."""
+"""Focused contracts for the virtual-file GitHub throttle fallback."""
 
 from __future__ import annotations
 

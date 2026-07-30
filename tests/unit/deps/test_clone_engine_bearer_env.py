@@ -1,4 +1,4 @@
-﻿"""Focused contracts for CloneEngine's ADO bearer-retry env construction (#2368)."""
+"""Focused contracts for CloneEngine's ADO bearer-retry env construction (#2368)."""
 
 from __future__ import annotations
 
