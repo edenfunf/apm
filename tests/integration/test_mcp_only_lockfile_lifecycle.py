@@ -212,6 +212,40 @@ def test_frozen_dedicated_mcp_add_fails_before_manifest_or_config_write(
     assert_unchanged(cache_before, ArtifactSnapshot.capture(isolated.cache_root))
 
 
+def test_frozen_missing_redirect_root_does_not_create_directory(
+    tmp_path: Path,
+    apm_binary_path: Path,
+) -> None:
+    isolated, environment, project, runner = _scenario(
+        tmp_path / "redirect-root",
+        apm_binary_path,
+    )
+    redirect_root = isolated.work_root / "missing-deploy-root"
+    before = _snapshot(project)
+    cache_before = ArtifactSnapshot.capture(isolated.cache_root)
+
+    result = runner.run(
+        (
+            "install",
+            "--frozen",
+            "--root",
+            str(redirect_root),
+            "--target",
+            "cursor",
+            "--no-policy",
+        ),
+        scenario_id="mcp-only-frozen-missing-redirect-root",
+        cwd=project.root,
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "--frozen requires --root directory" in result.stdout + result.stderr
+    assert not redirect_root.exists()
+    _assert_same_state(before, _snapshot(project))
+    assert_unchanged(cache_before, ArtifactSnapshot.capture(isolated.cache_root))
+
+
 @pytest.mark.parametrize(
     "install_suffix",
     (

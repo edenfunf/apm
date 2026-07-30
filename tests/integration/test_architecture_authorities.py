@@ -85,10 +85,15 @@ def test_frozen_install_decisions_have_single_owner() -> None:
 
     assert service.count("def enforce_frozen(") == 1
     assert service.count("def reject_frozen_mutation(") == 1
+    assert service.count("def reject_missing_frozen_root(") == 1
     assert "InstallService.enforce_frozen(" in adapter
     assert "InstallService.reject_frozen_mutation(" in adapter
+    assert "InstallService.reject_missing_frozen_root(" in adapter
     assert adapter.index("InstallService.enforce_frozen(") < adapter.index(
         "migrate_lockfile_if_needed(ctx.apm_dir)"
+    )
+    assert adapter.index("InstallService.reject_missing_frozen_root(") < adapter.index(
+        "_root_redirect = install_root_redirect("
     )
     assert "Frozen install decisions must route through InstallService before mutation" in guard
 

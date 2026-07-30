@@ -18,6 +18,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from apm_cli.deps.lockfile import LockFile, get_lockfile_path
 from apm_cli.integration.mcp_integrator import MCPIntegrator
@@ -90,6 +91,17 @@ class TestLockfileCreatedForMcpOnlyProject(_ProjectCase):
     def test_configs_without_server_names_still_create_the_lockfile(self):
         self._persist(servers=frozenset())
         self.assertTrue(self.lock_path.exists())
+
+    def test_creation_failure_emits_actionable_warning(self):
+        with (
+            patch.object(LockFile, "save", side_effect=OSError("read-only")),
+            patch("apm_cli.integration.mcp_integrator._rich_warning") as warning,
+        ):
+            self._persist()
+
+        warning.assert_called_once()
+        self.assertIn("Could not write", warning.call_args.args[0])
+        self.assertIn("Ensure the directory is writable", warning.call_args.args[0])
 
 
 class TestLegacyLockfileIsMigratedFirst(_ProjectCase):

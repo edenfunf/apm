@@ -869,7 +869,12 @@ def _handle_mcp_install(  # noqa: PLR0913
 @click.option(
     "--frozen",
     is_flag=True,
-    help="Refuse to install when apm.lock.yaml is missing or out of sync with apm.yml (CI-safe; mutually exclusive with --update). Structural presence check only; use 'apm audit' for on-disk integrity.",
+    help=(
+        "Refuse to install when apm.lock.yaml is missing or out of sync with "
+        "apm.yml, including MCP config state (CI-safe; mutually exclusive with "
+        "--update, --mcp, and positional packages). Use 'apm audit' for on-disk "
+        "integrity."
+    ),
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed installation information")
 @click.option(
@@ -1179,12 +1184,17 @@ def install(  # noqa: PLR0913
         raise click.UsageError("--root is not valid with --global (user scope)")
     from ..core.install_audit import resolve_audit_override_from_cli
     from ..install.root_redirect import install_root_redirect
+    from ..install.service import InstallService
 
     try:
         audit_override = resolve_audit_override_from_cli(no_audit, audit_mode)
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
 
+    try:
+        InstallService.reject_missing_frozen_root(frozen, root)
+    except FrozenInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
     _root_redirect = install_root_redirect(root, dry_run=dry_run)
     _root_redirect.__enter__()
     try:
@@ -1331,8 +1341,6 @@ def install(  # noqa: PLR0913
             any_transport_flag=use_ssh or use_https or allow_protocol_fallback,
             registry_url=validated_registry_url,
         )
-        from ..install.service import InstallService
-
         if mcp_name is not None:
             InstallService.reject_frozen_mutation(frozen, "--mcp")
         elif pre_dash_packages:
@@ -1580,7 +1588,7 @@ def install(  # noqa: PLR0913
         logger.error(str(e))
         for reason in e.reasons:
             logger.error_detail(reason)
-        logger.info("Tip: run 'apm outdated' to see what changed, then 'apm update'.")
+        logger.info(_frozen_install_tip(e))
         command_result = (
             transaction.fail(e)
             if transaction is not None
@@ -1640,6 +1648,13 @@ def install(  # noqa: PLR0913
 # ---------------------------------------------------------------------------
 # install() decomposition: APM pipeline + post-install summary
 # ---------------------------------------------------------------------------
+
+
+def _frozen_install_tip(error: FrozenInstallError) -> str:
+    """Return recovery guidance tailored to package or MCP lock drift."""
+    if any("MCP server" in reason for reason in error.reasons):
+        return "Tip: run 'apm install' without --frozen to create or repair MCP lock state."
+    return "Tip: run 'apm outdated' to see what changed, then 'apm update'."
 
 
 def _install_apm_packages(ctx, outcome):
@@ -1849,7 +1864,7 @@ def _install_apm_packages(ctx, outcome):
             logger.error(str(e))
             for reason in e.reasons:
                 logger.error_detail(reason)
-            logger.info("Tip: run 'apm outdated' to see what changed, then 'apm update'.")
+            logger.info(_frozen_install_tip(e))
             raise InstallFailureAlreadyRendered(str(e)) from e
         except InstallFailureAlreadyRendered:
             raise

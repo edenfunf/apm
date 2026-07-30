@@ -178,6 +178,21 @@ class InstallService:
         )
 
     @staticmethod
+    def reject_missing_frozen_root(frozen: bool, root: str | None) -> None:
+        """Reject a missing redirected root before the redirect creates it."""
+        if not frozen or root is None:
+            return
+        from pathlib import Path
+
+        from apm_cli.install.errors import FrozenInstallError
+
+        if not Path(root).exists():
+            raise FrozenInstallError(
+                f"--frozen requires --root directory {root!r} to exist. "
+                "Create and populate it with a normal install before retrying."
+            )
+
+    @staticmethod
     def enforce_frozen(request: InstallRequest) -> None:
         """Raise :class:`FrozenInstallError` if lockfile is absent or stale.
 
@@ -227,7 +242,7 @@ class InstallService:
         from apm_cli.integration.mcp_config_view import CurrentMcpConfigView
 
         root_mcp = list(request.apm_package.get_all_mcp_dependencies())
-        check_mcp = bool(root_mcp) or (not manifest_deps and bool(lockfile.mcp_configs))
+        check_mcp = bool(root_mcp) or bool(lockfile.mcp_configs) or bool(lockfile.mcp_servers)
         if check_mcp:
             current_mcp = CurrentMcpConfigView.derive(
                 request.apm_package,
@@ -250,7 +265,7 @@ class InstallService:
                     reasons.append(f"  - MCP server {name!r} is no longer declared in apm.yml")
             expected_names = set(current_mcp.configs)
             locked_names = set(lockfile.mcp_servers)
-            if expected_names != locked_names:
+            if expected_names != locked_names and config_diff.is_empty:
                 reasons.append("  - MCP server names in apm.lock.yaml are out of sync with apm.yml")
 
         satisfied = satisfied and not reasons
@@ -259,5 +274,3 @@ class InstallService:
                 "--frozen: apm.lock.yaml is out of sync with apm.yml.",
                 reasons=reasons,
             )
-
-    _enforce_frozen = enforce_frozen

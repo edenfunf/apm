@@ -101,7 +101,7 @@ def test_lockfile_dependency_carries_resolved_field():
     )
 
 
-@pytest.mark.req("req-lk-006")
+@pytest.mark.req("req-lk-013")
 def test_lockfile_dependency_carries_integrity_field_when_remote():
     doc = load_yaml_fixture(*TRUST_LOCKFILE)
     assert doc["dependencies"][0]["resolved_hash"].startswith("sha256:")

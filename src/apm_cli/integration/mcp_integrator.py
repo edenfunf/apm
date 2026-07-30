@@ -9,6 +9,8 @@ The existing adapters (client/, package_manager/) and registry operations
 (registry/operations.py) are *used* by this class, not modified.
 """
 
+from __future__ import annotations
+
 import builtins
 import copy
 import json
@@ -19,6 +21,7 @@ import warnings
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
@@ -40,6 +43,9 @@ from apm_cli.utils.console import (
     _rich_success,
     _rich_warning,
 )
+
+if TYPE_CHECKING:
+    from apm_cli.core.command_logger import CommandLogger
 
 _log = logging.getLogger(__name__)
 
@@ -114,7 +120,7 @@ def _clean_toml_mcp_config(
     config_path: Path,
     stale_names: builtins.set,
     label: str,
-    logger=None,
+    logger: CommandLogger | None = None,
     use_rich: bool = True,
 ) -> int:
     """Remove stale entries from a TOML-based MCP config file.

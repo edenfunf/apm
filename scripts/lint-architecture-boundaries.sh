@@ -953,6 +953,10 @@ frozen_migration_line=$(grep -n 'migrate_lockfile_if_needed(ctx\.apm_dir)' "$fro
     | head -1 | cut -d: -f1)
 frozen_add_guard_line=$(grep -n 'InstallService\.reject_frozen_mutation(' "$frozen_adapter" \
     | head -1 | cut -d: -f1)
+frozen_root_guard_line=$(grep -n 'InstallService\.reject_missing_frozen_root(' "$frozen_adapter" \
+    | head -1 | cut -d: -f1)
+root_redirect_line=$(grep -n '_root_redirect = install_root_redirect(' "$frozen_adapter" \
+    | head -1 | cut -d: -f1)
 dedicated_mcp_line=$(grep -n '^[[:space:]]*_handle_mcp_install(' "$frozen_adapter" \
     | tail -1 | cut -d: -f1)
 frozen_duplicate_hits=$(
@@ -963,10 +967,14 @@ frozen_duplicate_hits=$(
 )
 if ! grep -q '^    def enforce_frozen(' "$frozen_owner" \
     || ! grep -q '^    def reject_frozen_mutation(' "$frozen_owner" \
+    || ! grep -q '^    def reject_missing_frozen_root(' "$frozen_owner" \
     || [ -z "$frozen_preflight_line" ] \
     || [ -z "$frozen_migration_line" ] \
     || [ "$frozen_preflight_line" -ge "$frozen_migration_line" ] \
     || [ -z "$frozen_add_guard_line" ] \
+    || [ -z "$frozen_root_guard_line" ] \
+    || [ -z "$root_redirect_line" ] \
+    || [ "$frozen_root_guard_line" -ge "$root_redirect_line" ] \
     || [ -z "$dedicated_mcp_line" ] \
     || [ "$frozen_add_guard_line" -ge "$dedicated_mcp_line" ] \
     || [ -n "$frozen_duplicate_hits" ]; then
