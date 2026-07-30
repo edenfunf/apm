@@ -542,6 +542,41 @@ def test_set_ado_bearer_git_env_delegates_with_bearer_scheme():
     assert env["GIT_CONFIG_VALUE_1"] == "Authorization: Bearer aad-jwt"
 
 
+@pytest.mark.parametrize(
+    ("scheme", "credential"),
+    [
+        ("Bearer", "tok\r\nGIT_CONFIG_KEY_9: injected"),
+        ("Bearer\r\nEvil", "tok"),
+        ("Bearer", "tok\ninjected"),
+    ],
+)
+def test_set_authorization_header_rejects_crlf_in_scheme_or_credential(scheme, credential):
+    """Defense-in-depth: a CR/LF in scheme or credential could smuggle a second
+    git-config entry into the appended value; reject it before it is written.
+    """
+    env = {"GIT_CONFIG_COUNT": "0"}
+    with pytest.raises(ValueError, match="CR or LF"):
+        github_host.set_authorization_header_git_env(env, scheme, credential)
+    # Reject-before-mutate: no partial write on the rejected call.
+    assert env == {"GIT_CONFIG_COUNT": "0"}
+
+
+def test_set_authorization_header_does_not_false_positive_on_substring_authorization():
+    """A retained non-auth value that merely CONTAINS 'authorization' as a
+    substring (not an actual Authorization: header) must survive the filter.
+    """
+    env = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.proxy",
+        "GIT_CONFIG_VALUE_0": "http://authorization-proxy.corp.example:3128",
+    }
+    github_host.set_authorization_header_git_env(env, "Bearer", "tok")
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "http.proxy"
+    assert env["GIT_CONFIG_VALUE_0"] == "http://authorization-proxy.corp.example:3128"
+    assert env["GIT_CONFIG_KEY_1"] == "http.extraheader"
+
+
 def test_unsupported_host_error_with_context():
     """Test that context message is included when provided."""
     error_msg = github_host.unsupported_host_error(
