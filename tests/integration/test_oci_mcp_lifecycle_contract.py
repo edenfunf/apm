@@ -381,7 +381,7 @@ def test_vscode_typed_value_mount_survives_install_update_and_offline_audit(
         "--trust-transitive-mcp",
         "--no-policy",
     )
-    update = ("update", "--yes", "--target", "copilot")
+    update = ("update", "--yes", "--target", "vscode")
     expected_args = [
         "run",
         "-i",
