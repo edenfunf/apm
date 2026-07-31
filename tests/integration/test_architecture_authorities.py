@@ -100,6 +100,7 @@ def test_frozen_install_decisions_have_single_owner() -> None:
     )
     assert "Frozen install decisions must route through InstallService before mutation" in guard
 
+
 def test_hook_rewrite_scope_has_single_owner() -> None:
     """Native hook paths must consume HookIntegrator's scope decision."""
     root = Path(__file__).parents[2]
