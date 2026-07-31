@@ -101,6 +101,26 @@ def test_frozen_install_decisions_have_single_owner() -> None:
     assert "Frozen install decisions must route through InstallService before mutation" in guard
 
 
+def test_lifecycle_marker_partition_is_collection_derived() -> None:
+    """Lifecycle membership must come from independent pytest collections."""
+    root = Path(__file__).parents[2]
+    topology = (root / "tests/quality/test_ci_topology.py").read_text(encoding="utf-8")
+    guard = (root / "scripts/lint-architecture-boundaries.sh").read_text(encoding="utf-8")
+
+    forbidden = (
+        "LIFECYCLE_SMOKE_FULL_COUNT",
+        "LIFECYCLE_SMOKE_MERGE_GROUP_COUNT",
+        "LIFECYCLE_SMOKE_REQUIRED_COUNT",
+        "LIFECYCLE_SMOKE_MERGE_GROUP_NODES",
+    )
+    assert not any(token in topology for token in forbidden)
+    assert "def _validated_lifecycle_node_set(" in topology
+    assert "def _assert_lifecycle_partition_sets(" in topology
+    assert "merge_group < full" in topology
+    assert "required == full - merge_group" in topology
+    assert "Lifecycle marker partitions must be collection-derived" in guard
+
+
 def test_hook_rewrite_scope_has_single_owner() -> None:
     """Native hook paths must consume HookIntegrator's scope decision."""
     root = Path(__file__).parents[2]

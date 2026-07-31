@@ -913,6 +913,23 @@ if ! grep -q 'getattr(module, "pytestmark"' "$taxonomy_plugin" \
     violations=$((violations + 1))
 fi
 
+lifecycle_topology_contract="tests/quality/test_ci_topology.py"
+lifecycle_membership_hits=$(
+    grep -En \
+        'LIFECYCLE_SMOKE_(FULL_COUNT|MERGE_GROUP_COUNT|REQUIRED_COUNT|MERGE_GROUP_NODES)|expected_(full_count|merge_group_nodes|required_count)' \
+        "$lifecycle_topology_contract" \
+        || true
+)
+if ! grep -q '^def _validated_lifecycle_node_set(' "$lifecycle_topology_contract" \
+    || ! grep -q '^def _assert_lifecycle_partition_sets(' "$lifecycle_topology_contract" \
+    || ! grep -q 'merge_group < full' "$lifecycle_topology_contract" \
+    || ! grep -q 'required == full - merge_group' "$lifecycle_topology_contract" \
+    || [ -n "$lifecycle_membership_hits" ]; then
+    echo "[x] Lifecycle marker partitions must be collection-derived, never count/list pinned"
+    [ -n "$lifecycle_membership_hits" ] && echo "$lifecycle_membership_hits"
+    violations=$((violations + 1))
+fi
+
 echo "[*] AC23: self-update release selection authority"
 self_update_owner="src/apm_cli/commands/self_update.py"
 self_update_owner_defs=$(grep -Ec \
