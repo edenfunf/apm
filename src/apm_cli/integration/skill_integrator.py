@@ -6,9 +6,10 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from apm_cli.core.deployment_state import MaterializationResult
 from apm_cli.install.services import enforce_agent_plugin_deployment_boundary
@@ -16,6 +17,11 @@ from apm_cli.integration.base_integrator import BaseIntegrator
 from apm_cli.integration.targets import TargetProfile
 from apm_cli.models.dependency.subsets import skill_subset_filter_tokens
 from apm_cli.utils.atomic_io import write_text_lf
+
+if TYPE_CHECKING:
+    # Runtime imports of PackageType stay inside the functions that need it:
+    # importing the models package here would close an import cycle.
+    from apm_cli.models.validation import PackageType
 
 
 def _build_copy_ignore(
@@ -615,21 +621,59 @@ class SkillIntegrator(BaseIntegrator):
 
     @staticmethod
     def skill_source_dir(package_path: Path) -> Path:
-        """Return the directory a package's deployable skills are promoted from.
+        """Return the bundle directory a package's skills are promoted from.
 
-        Single source of truth for skill routing: deployment and ``--skill``
-        enumeration both resolve through here so the set a user may select can
-        never drift from the set that actually deploys (issue #2530). A root
-        ``skills/`` bundle wins whenever it holds at least one skill; otherwise
-        the normalized ``.apm/skills/`` location supplies them.
-
-        Callers must handle a root ``SKILL.md`` before asking: a native
-        single-skill package deploys the bundle itself, not children.
+        A root ``skills/`` bundle wins whenever it holds at least one skill;
+        otherwise the normalized ``.apm/skills/`` location supplies them.
+        Plugins refine this per skill -- see ``skill_source_paths``.
         """
         root_bundle = package_path / "skills"
         if SkillIntegrator._skill_names_in_directory(root_bundle):
             return root_bundle
         return package_path / ".apm" / "skills"
+
+    @staticmethod
+    def skill_source_paths(
+        package_path: Path, package_type: "PackageType | None" = None
+    ) -> dict[str, Path]:
+        """Map every deployable skill name to the directory it is promoted from.
+
+        Single source of truth for skill routing: deployment and ``--skill``
+        enumeration both resolve through here, so the set a user may select
+        can never drift from the set that actually deploys (issue #2530).
+
+        For a ``MARKETPLACE_PLUGIN`` the normalized ``.apm/skills/`` is the
+        resolved ``plugin.json`` declaration, so it decides *which* skills
+        exist. The raw root ``skills/`` is pre-resolution input; letting it
+        decide deploys components the manifest never declared and drops
+        declared ones living outside the conventional container (#2537).
+        An empty resolution is a real answer -- ``"skills": []`` means no
+        skills, and a path rejected for escaping the plugin root must fail
+        closed rather than fall back to whatever the raw tree holds.
+
+        Each declared skill is still *sourced* from the root bundle when that
+        copy exists. It is byte-identical, but sits one level higher, so
+        relative links that leave the skill bundle keep resolving against the
+        package root instead of against ``.apm/``.
+
+        Callers must handle a root ``SKILL.md`` before asking: a native
+        single-skill package deploys the bundle itself, not children.
+        """
+        from apm_cli.models.validation import PackageType
+
+        normalized = package_path / ".apm" / "skills"
+        if package_type is PackageType.MARKETPLACE_PLUGIN:
+            root_bundle = package_path / "skills"
+            resolved: dict[str, Path] = {}
+            for name in SkillIntegrator._skill_names_in_directory(normalized):
+                preferred = root_bundle / name
+                resolved[name] = (
+                    preferred if (preferred / "SKILL.md").is_file() else normalized / name
+                )
+            return resolved
+
+        source = SkillIntegrator.skill_source_dir(package_path)
+        return {name: source / name for name in SkillIntegrator._skill_names_in_directory(source)}
 
     @staticmethod
     def available_skill_names(package_info) -> frozenset[str] | None:
@@ -640,8 +684,8 @@ class SkillIntegrator(BaseIntegrator):
         if (package_path / "SKILL.md").is_file():
             return None
 
-        return SkillIntegrator._skill_names_in_directory(
-            SkillIntegrator.skill_source_dir(package_path)
+        return frozenset(
+            SkillIntegrator.skill_source_paths(package_path, package_info.package_type)
         )
 
     @staticmethod
@@ -697,6 +741,7 @@ class SkillIntegrator(BaseIntegrator):
         logger=None,
         name_filter: set[str] | None = None,
         link_rewriter: "SkillIntegrator | None" = None,
+        source_paths: dict[str, Path] | None = None,
     ) -> tuple[int, list[Path]]:
         """Promote sub-skills from .apm/skills/ to top-level skill entries.
 
@@ -709,14 +754,23 @@ class SkillIntegrator(BaseIntegrator):
                 When provided, warnings are suppressed for self-overwrites.
             diagnostics: Optional DiagnosticCollector for deferred warning output.
             project_root: Project root for computing relative diagnostic paths.
+            source_paths: Explicit name -> source directory map. Plugins resolve
+                each declared skill individually, so their sources do not all
+                share one parent directory. When omitted, every child of
+                *sub_skills_dir* is a candidate.
 
         Returns:
             tuple[int, list[Path]]: (count of promoted sub-skills, list of deployed dir paths)
         """
         promoted = 0
         deployed = []
-        if not sub_skills_dir.is_dir():
-            return promoted, deployed
+        candidates: Iterable[Path]
+        if source_paths is None:
+            if not sub_skills_dir.is_dir():
+                return promoted, deployed
+            candidates = sub_skills_dir.iterdir()
+        else:
+            candidates = [source_paths[name] for name in sorted(source_paths)]
 
         # Compute project-relative prefix for consistent path reporting
         if project_root is not None:
@@ -729,7 +783,7 @@ class SkillIntegrator(BaseIntegrator):
         else:
             rel_prefix = target_skills_root.name
 
-        for sub_skill_path in sub_skills_dir.iterdir():
+        for sub_skill_path in candidates:
             if not sub_skill_path.is_dir():
                 continue
             if not (sub_skill_path / "SKILL.md").exists():
@@ -1222,6 +1276,7 @@ class SkillIntegrator(BaseIntegrator):
         targets=None,
         skill_subset=None,
         skip_bin: bool = False,
+        source_paths: dict[str, Path] | None = None,
     ) -> SkillIntegrationResult:
         """Promote every skill in a SKILL_BUNDLE's top-level skills/ directory.
 
@@ -1239,6 +1294,9 @@ class SkillIntegrator(BaseIntegrator):
             logger: Optional InstallLogger.
             targets: Optional explicit list of TargetProfile objects.
             skill_subset: Optional tuple of skill names to install (None = all).
+            source_paths: Explicit name -> source directory map, for packages
+                whose deployable skills do not all share one parent directory.
+                When omitted, every child of *skills_dir* is a candidate.
 
         Returns:
             SkillIntegrationResult with all promoted skills.
@@ -1263,7 +1321,11 @@ class SkillIntegrator(BaseIntegrator):
         any_created = False
         seen_skill_dirs: set[Path] = set()
         primary_selected = False
-        available_names = self._skill_names_in_directory(skills_dir)
+        available_names = (
+            frozenset(source_paths)
+            if source_paths is not None
+            else self._skill_names_in_directory(skills_dir)
+        )
 
         # Convert skill_subset tuple to promotion filter tokens for O(1) lookup.
         _name_filter = skill_subset_filter_tokens(skill_subset)
@@ -1305,6 +1367,7 @@ class SkillIntegrator(BaseIntegrator):
                 name_filter=_name_filter,
                 link_rewriter=self,
                 skip_bin=skip_bin,
+                source_paths=source_paths,
             )
             if is_primary:
                 total_promoted = n
@@ -1479,16 +1542,26 @@ class SkillIntegrator(BaseIntegrator):
             )
 
         # SKILL_BUNDLE: promote skills from root-level skills/ directory.
-        # Routed through ``skill_source_dir`` -- the same helper backing
+        # Routed through ``skill_source_paths`` -- the same helper backing
         # ``available_skill_names`` -- so a ``--skill`` value can never be
-        # validated against a directory other than the one that deploys.
+        # validated against a set other than the one that deploys.
+        #
+        # A plugin's resolved declaration IS its bundle, wherever the
+        # individual skills happen to sit, so it takes this path rather than
+        # the sub-skill path (#2537). For every other type the bundle is the
+        # root ``skills/`` directory, and ``.apm/skills/`` stays what it has
+        # always been: sub-skills promoted alongside a package that is not
+        # itself a skill.
         root_skills_dir = package_path / "skills"
-        if self.skill_source_dir(package_path) == root_skills_dir:
+        _source_paths = self.skill_source_paths(package_path, package_info.package_type)
+        _is_plugin = package_info.package_type == _PackageType.MARKETPLACE_PLUGIN
+        if _source_paths and (_is_plugin or self.skill_source_dir(package_path) == root_skills_dir):
             return self._merge_bin_paths(
                 self._integrate_skill_bundle(
                     package_info,
                     project_root,
                     root_skills_dir,
+                    source_paths=_source_paths,
                     diagnostics=diagnostics,
                     managed_files=managed_files,
                     force=force,
