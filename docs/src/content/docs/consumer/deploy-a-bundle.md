@@ -73,7 +73,12 @@ Steps APM runs:
 3. **Verify integrity.** Hash every file listed in `pack.bundle_files`;
    reject any symlink, hash mismatch, or unlisted file.
 4. **Deploy.** Map `agents/`, `skills/`, `commands/`, `hooks/` into the
-   harness layout for each `--target` you passed.
+   harness layout for each `--target` you passed. Where `plugin.json`
+   declares a key, that declaration *replaces* the directory scan for the
+   primitive instead of adding to it: with `"skills": ["./skills/tone"]`
+   only `tone` deploys, even when `skills/` holds siblings, and
+   `"skills": []` deploys none. Omit the key to deploy whatever the
+   conventional directory holds.
 5. **Record.** Write a lockfile entry under the project's `apm.lock.yaml`
    so [drift detection](../drift-and-secure-by-default/) can audit the
    deployed files later.

@@ -12,6 +12,7 @@ from apm_cli.deps.plugin_parser import (
     PluginIntegrityError,
     _extract_mcp_servers,
     _generate_apm_yml,
+    _holds_skill_dirs,
     _map_plugin_artifacts,
     _mcp_servers_to_apm_deps,
     normalize_plugin_directory,
@@ -109,6 +110,79 @@ class TestParsePluginManifest:
 
         with pytest.raises(ValueError, match="Invalid JSON"):
             parse_plugin_manifest(pj)
+
+
+class TestHoldsSkillDirs:
+    """Direct coverage for the per-entry classifier behind #2530.
+
+    Fixtures reach it through ``_map_plugin_artifacts``, which exercises the
+    two healthy shapes -- a skill, and a container of them. The branches that
+    say "neither" are the ones deciding whether unrecognized content merges
+    into the shared skills root, and they were only ever reached transitively.
+    Pin them here: anything a wrong answer lets through lands in
+    ``.apm/skills/`` under no name of its own.
+    """
+
+    def test_own_skill_md_wins_over_a_nested_one(self, tmp_path):
+        """Carrying ``SKILL.md`` settles it -- children are not consulted.
+
+        Both shapes are present here, so this pins the precedence rather
+        than restating either branch: merging such an entry would spill a
+        bare ``SKILL.md`` into the shared skills root under no name at all.
+        """
+        skill = tmp_path / "engineering"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("# engineering", encoding="utf-8")
+        (skill / "tdd").mkdir()
+        (skill / "tdd" / "SKILL.md").write_text("# tdd", encoding="utf-8")
+
+        assert _holds_skill_dirs(skill) is False
+
+    def test_directory_of_skill_directories_is_a_container(self, tmp_path):
+        container = tmp_path / "skills"
+        (container / "tdd").mkdir(parents=True)
+        (container / "tdd" / "SKILL.md").write_text("# tdd", encoding="utf-8")
+
+        assert _holds_skill_dirs(container) is True
+
+    def test_empty_directory_is_not_a_container(self, tmp_path):
+        empty = tmp_path / "skills"
+        empty.mkdir()
+
+        # ``any()`` over nothing is False, so an empty declared container
+        # keeps its own name rather than merging -- there is nothing to
+        # merge, and treating it as a container would be a guess.
+        assert _holds_skill_dirs(empty) is False
+
+    def test_directory_whose_skills_sit_two_levels_down_is_not_a_container(self, tmp_path):
+        container = tmp_path / "skills"
+        (container / "engineering" / "tdd").mkdir(parents=True)
+        (container / "engineering" / "tdd" / "SKILL.md").write_text("# tdd", encoding="utf-8")
+
+        assert _holds_skill_dirs(container) is False
+
+    def test_missing_directory_is_not_a_container(self, tmp_path):
+        # ``iterdir`` raises FileNotFoundError -- an OSError -- rather than
+        # yielding nothing. A declared entry that vanished between
+        # resolution and mapping must not be read as a merge instruction.
+        assert _holds_skill_dirs(tmp_path / "gone") is False
+
+    def test_unreadable_directory_is_not_a_container(self, tmp_path, monkeypatch):
+        """A directory APM cannot list must fail closed, not merge blind.
+
+        Permission errors are the shape this guards on POSIX; they are
+        raised here directly because chmod is advisory for root and a no-op
+        for directory listing on Windows.
+        """
+        unreadable = tmp_path / "skills"
+        unreadable.mkdir()
+
+        def _deny(self):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "iterdir", _deny)
+
+        assert _holds_skill_dirs(unreadable) is False
 
 
 class TestMapPluginArtifacts:

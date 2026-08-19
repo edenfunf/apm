@@ -353,6 +353,53 @@ def test_consumer_names_skills_a_plugin_collection_exposes(tmp_path: Path) -> No
     assert_spec_contains("with a named-skills container")
 
 
+@pytest.mark.req("req-mf-022")
+def test_consumer_names_only_the_skills_a_plugin_manifest_declares(tmp_path: Path) -> None:
+    """req-mf-022's available-names clause answers from the manifest, not the tree.
+
+    Section 8.1 settles which set that is for a plugin collection: artifacts
+    are mapped per the plugin manifest, so the resolved declaration is the
+    container of individually addressable entries. Deployment re-derived the
+    set from the raw pre-resolution `skills/` directory instead, so a plugin
+    declaring one of two sibling skills reported -- and deployed -- both. The
+    diagnostic named a skill the consumer had no manifest basis to offer
+    (#2537).
+    """
+    from apm_cli.models.validation import PackageType
+
+    plugin = tmp_path / "selective"
+    plugin_json = plugin / ".claude-plugin" / "plugin.json"
+    plugin_json.parent.mkdir(parents=True)
+    plugin_json.write_text(
+        '{"name": "selective", "version": "1.0.0", "skills": ["./skills/declared"]}',
+        encoding="utf-8",
+    )
+    for name in ("declared", "undeclared"):
+        skill = plugin / "skills" / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+
+    normalize_plugin_directory(plugin, plugin_json)
+
+    available = SkillIntegrator.available_skill_names(
+        SimpleNamespace(install_path=plugin, package_type=PackageType.MARKETPLACE_PLUGIN)
+    )
+    assert available == frozenset({"declared"})
+
+    diagnostics = DiagnosticCollector()
+    SkillIntegrator._warn_no_skill_filter_match(
+        available,
+        ("undeclared",),
+        "acme/selective",
+        diagnostics=diagnostics,
+    )
+    warning = diagnostics.by_category()[CATEGORY_WARNING][0]
+    assert "Available: declared" in warning.message
+    assert "undeclared" not in warning.message.split("Available:")[1]
+
+    assert_spec_contains("Artifacts are mapped into deploy directories per the plugin")
+
+
 @pytest.mark.req("req-mf-024")
 def test_consumer_preserves_registry_identity_on_structured_rewrite(monkeypatch):
     """req-mf-024: a registry-sourced (`id:`) entry MUST NOT be silently

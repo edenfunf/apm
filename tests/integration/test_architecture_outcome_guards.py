@@ -295,6 +295,71 @@ def test_plugin_empty_skills_declaration_resolves_to_nothing(
     assert SkillIntegrator.available_skill_names(info) == frozenset()
 
 
+def test_plugin_declaring_no_skills_says_which_ones_it_shadowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A declaration that deploys nothing must not be indistinguishable from no skills.
+
+    Zero deployable skills is a legitimate answer -- most plugins ship none,
+    and none of them should be nagged. It stops being obvious once the package
+    carries a root ``skills/`` bundle whose contents used to deploy: after
+    #2537 the declaration decides, so exactly that shape needs one line
+    telling "no skills by design" apart from a declaration that ate them.
+    """
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {"name": "quiet-skills", "version": "1.0.0", "skills": []},
+    )
+    for name in ("alpha", "beta"):
+        skill = plugin / "skills" / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: d\n---\n# {name}\n", encoding="utf-8"
+        )
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install"])
+
+    assert result.exit_code == 0, result.output
+    assert "declares no deployable skills" in result.output
+    assert "alpha, beta" in result.output
+    # The declaration is still authoritative -- the note explains, not undoes.
+    assert not (consumer / ".claude" / "skills" / "alpha").exists()
+
+
+def test_plugin_without_any_skills_stays_quiet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No root bundle means nothing was shadowed, so there is nothing to say."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {"name": "agents-only", "version": "1.0.0"},
+    )
+    agents = plugin / "agents"
+    agents.mkdir()
+    (agents / "helper.agent.md").write_text(
+        "---\nname: helper\ndescription: d\n---\n# helper\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install"])
+
+    assert result.exit_code == 0, result.output
+    assert "declares no deployable skills" not in result.output
+
+
 def test_skill_enumeration_falls_back_to_the_normalized_container(
     tmp_path: Path,
 ) -> None:
@@ -318,7 +383,7 @@ def test_skill_enumeration_falls_back_to_the_normalized_container(
     info = MagicMock(install_path=package, package_type=PackageType.MARKETPLACE_PLUGIN)
     expected = frozenset({"csharp-scripts", "dotnet-pinvoke"})
 
-    assert SkillIntegrator.skill_source_dir(package) == normalized
+    assert SkillIntegrator._skill_source_dir(package) == normalized
     assert SkillIntegrator.available_skill_names(info) == expected
 
     # Existing is not the test -- holding a skill is. A root ``skills/`` with
@@ -327,7 +392,7 @@ def test_skill_enumeration_falls_back_to_the_normalized_container(
     (root_bundle / "docs").mkdir(parents=True)
     (root_bundle / "README.md").write_text("# not a skill\n", encoding="utf-8")
 
-    assert SkillIntegrator.skill_source_dir(package) == normalized
+    assert SkillIntegrator._skill_source_dir(package) == normalized
     assert SkillIntegrator.available_skill_names(info) == expected
 
 

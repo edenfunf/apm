@@ -58,6 +58,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`"skills": "./skills/engineering/tdd"`) still lands under its own leaf name
   instead of spilling a bare `SKILL.md` into the shared skills root.
   (closes #2530)
+- A plugin's `plugin.json` is now authoritative for which skills deploy. The
+  raw root `skills/` directory overrode the resolved declaration, so the
+  deployed set could differ from the declared one in both directions --
+  silently: declaring `"skills": ["./skills/a"]` still deployed sibling `b`
+  alongside it, and a skill declared outside the conventional container was
+  dropped entirely. A declaration replaces default discovery rather than
+  adding to it, so `"skills": []` now means no skills, and a declared path
+  rejected for escaping the plugin root fails closed instead of falling back
+  to the raw tree. **Behaviour change for plugin authors:** if your
+  `plugin.json` declares a `skills` subset while shipping more skills under
+  `skills/`, the undeclared ones stop deploying -- declare them, or drop the
+  key to keep deploying everything the directory holds. When a declaration
+  resolves to no skills while the package does carry a root `skills/` bundle,
+  install now names the skills it left behind instead of saying nothing.
+  Where a declared skill also exists in the root bundle it keeps being read
+  from there, so relative links leaving a skill still resolve against the
+  package root. (closes #2537)
 - Multi-target `apm compile` now avoids repeating expensive project analysis
   for each target, making multi-target runs scale like single-target runs
   without changing generated output. (closes #2482)

@@ -620,12 +620,17 @@ class SkillIntegrator(BaseIntegrator):
             return frozenset()
 
     @staticmethod
-    def skill_source_dir(package_path: Path) -> Path:
-        """Return the bundle directory a package's skills are promoted from.
+    def _skill_source_dir(package_path: Path) -> Path:
+        """Return the single directory a package's skills are promoted from.
 
         A root ``skills/`` bundle wins whenever it holds at least one skill;
         otherwise the normalized ``.apm/skills/`` location supplies them.
-        Plugins refine this per skill -- see ``skill_source_paths``.
+
+        Private on purpose: a plugin's skills need not share one parent, so
+        this answer is incomplete for ``MARKETPLACE_PLUGIN`` and reading it
+        directly is how the raw tree overrode the declaration in the first
+        place (#2537). ``skill_source_paths`` is the routing entry point --
+        it consults this only for the types that do have a single source.
         """
         root_bundle = package_path / "skills"
         if SkillIntegrator._skill_names_in_directory(root_bundle):
@@ -672,7 +677,7 @@ class SkillIntegrator(BaseIntegrator):
                 )
             return resolved
 
-        source = SkillIntegrator.skill_source_dir(package_path)
+        source = SkillIntegrator._skill_source_dir(package_path)
         return {name: source / name for name in SkillIntegrator._skill_names_in_directory(source)}
 
     @staticmethod
@@ -722,6 +727,49 @@ class SkillIntegrator(BaseIntegrator):
                 from apm_cli.utils.console import _rich_warning
 
                 _rich_warning(f"Package '{parent_name}': {details}", symbol="warning")
+            except ImportError:
+                pass
+
+    @staticmethod
+    def _note_plugin_declaration_deploys_no_skills(
+        package_path: Path,
+        parent_name: str,
+        diagnostics=None,
+        logger=None,
+    ) -> None:
+        """Report a plugin whose declaration resolves to no skills at all.
+
+        Zero deployable skills is a legitimate answer -- most plugins ship
+        none. It stops being obvious once the package actually carries a
+        root ``skills/`` bundle: those skills deployed before the declaration
+        became authoritative (#2537), and now nothing does, with no line of
+        output to tell "no skills by design" apart from "my declaration ate
+        them". Say which names went unclaimed, once, at that exact shape.
+        """
+        shadowed = SkillIntegrator._skill_names_in_directory(package_path / "skills")
+        if not shadowed:
+            return
+        names = ", ".join(sorted(shadowed))
+        message = (
+            f"Package '{parent_name}': plugin.json declares no deployable skills, "
+            f"so nothing under skills/ deploys ({names})."
+        )
+        detail = (
+            "A 'skills' declaration replaces default discovery instead of adding "
+            "to it. Declare each skill directory, or the container holding them, "
+            "to deploy them -- or drop the 'skills' key to fall back to "
+            "discovering skills/."
+        )
+        if diagnostics is not None:
+            diagnostics.info(message, package=parent_name, detail=detail)
+        elif logger:
+            logger.info(message)
+            logger.verbose_detail(detail)
+        else:
+            try:
+                from apm_cli.utils.console import _rich_info
+
+                _rich_info(message)
             except ImportError:
                 pass
 
@@ -1555,7 +1603,16 @@ class SkillIntegrator(BaseIntegrator):
         root_skills_dir = package_path / "skills"
         _source_paths = self.skill_source_paths(package_path, package_info.package_type)
         _is_plugin = package_info.package_type == _PackageType.MARKETPLACE_PLUGIN
-        if _source_paths and (_is_plugin or self.skill_source_dir(package_path) == root_skills_dir):
+        if _is_plugin and not _source_paths:
+            self._note_plugin_declaration_deploys_no_skills(
+                package_path,
+                package_path.name,
+                diagnostics=diagnostics,
+                logger=logger,
+            )
+        if _source_paths and (
+            _is_plugin or self._skill_source_dir(package_path) == root_skills_dir
+        ):
             return self._merge_bin_paths(
                 self._integrate_skill_bundle(
                     package_info,

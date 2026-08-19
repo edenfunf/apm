@@ -214,6 +214,12 @@ the appropriate runtime directory via `_map_plugin_artifacts`. Use `--skill`
 to cherry-pick plugin skills by leaf name or manifest path, such as
 `skills/productivity/grill-me`.
 
+A declared key is authoritative for its primitive: it replaces the default
+directory scan rather than adding to it. `"skills": ["./skills/search"]`
+deploys `search` and nothing else, and a skill declared outside `skills/`
+deploys even though no scan would have found it. Only an omitted key falls
+back to scanning the conventional directory.
+
 **Marketplace version checks:** a local Plugin collection may omit `apm.yml`.
 For `apm pack --check-versions`, APM uses `plugin.json`'s `version` only when
 `apm.yml` is absent. See [Versioning strategies](../../producer/versioning-strategies/)
