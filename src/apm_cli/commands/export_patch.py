@@ -10,17 +10,22 @@ the package source file and applied upstream (``git apply`` in a clone
 of the package repository, checked out at the locked base).
 
 Eligibility is decided by content, not by a per-format allowlist: a
-finding is exportable iff the replayed (expected) content matches
-exactly one file in the owning package's source tree AND that source
-file is byte-identical to the replayed content (not merely equal after
-drift normalization). The second condition guarantees the emitted diff
-applies to the raw on-disk source: a CRLF-, BOM-, or Build-ID-bearing
-source would digest-match in normalized space yet reject every hunk at
-``git apply`` time, so those are skipped with an accurate reason.
-Deployments that transform their source (frontmatter rewrites,
-aggregated or compiled outputs, resolved links) fail the digest match
-and are reported as skipped instead of producing a patch that would
-not apply.
+finding is exportable iff the *normalized* replayed (expected) content
+matches exactly one file in the owning package's source tree AND that
+source file is itself normalization-clean. Together those two give the
+invariant the patch actually needs -- the diff's ``a`` side is
+byte-identical to the raw source file on disk -- so every hunk applies.
+Comparing normalized bytes (rather than raw ones) is deliberate and
+symmetric: normalization runs on both sides of the diff, so a
+deployment artifact that ``apm audit`` already tolerates -- a
+re-stamped ``Build ID`` header, CRLF, a BOM -- neither leaks into the
+patch body nor blocks an otherwise verbatim export. A *source* file
+carrying one of those is the case that breaks: it would digest-match in
+normalized space yet reject every hunk at ``git apply`` time, so it is
+skipped with an accurate reason. Deployments that transform their
+source (frontmatter rewrites, aggregated or compiled outputs, resolved
+links) fail the digest match and are reported as skipped instead of
+producing a patch that would not apply.
 
 The command consumes the replay/diff APIs read-only; it never mutates
 the project tree, the cache, or the lockfile. Patch files are the only
@@ -41,7 +46,7 @@ import click
 
 from ..constants import APM_YML_FILENAME
 from ..core.command_logger import CommandLogger
-from ..deps.lockfile import LockFile, get_lockfile_path
+from ..deps.lockfile import LockFile, LockfileFormatError, get_lockfile_path
 from ..utils.normalization import _normalize
 
 if TYPE_CHECKING:
@@ -226,10 +231,17 @@ def _strip_userinfo(url: str) -> str:
     Private-registry and authenticated-source URLs can legally embed
     credentials; a patch file is made to be shared, so they must never
     be written into it.
+
+    The authority run is matched greedily up to its LAST ``@``: a
+    password carrying an unencoded ``@`` (``//user:p@ss@host/x``) splits
+    the userinfo into two segments, and stopping at the first ``@`` would
+    strip only ``user:`` and leave the secret in the header. Anchoring on
+    ``//`` and forbidding ``/`` keeps the match inside the authority, so
+    an ``@`` in the path (``//host/pkg@v1``) is never touched.
     """
     if "://" not in url:
         return url
-    return re.sub(r"(?<=//)[^/@]*@", "", url)
+    return re.sub(r"(?<=//)[^/]*@", "", url)
 
 
 def _base_label(dep: LockedDependency) -> str:
@@ -556,7 +568,14 @@ def _run_export_patch(logger: CommandLogger, out_dir: str, dry_run: bool, verbos
     if not lockfile_path.exists():
         logger.error("No lockfile found. Run 'apm install' first.")
         sys.exit(1)
-    lockfile = LockFile.read(lockfile_path)
+    try:
+        lockfile = LockFile.read(lockfile_path)
+    except LockfileFormatError as exc:
+        logger.error(
+            f"Lockfile at {lockfile_path} could not be parsed ({exc}); "
+            "fix it or re-run 'apm install'."
+        )
+        sys.exit(1)
     if lockfile is None:
         logger.error(
             f"Lockfile at {lockfile_path} could not be parsed; fix it or re-run 'apm install'."

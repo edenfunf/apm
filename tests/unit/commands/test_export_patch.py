@@ -229,6 +229,24 @@ def test_header_strips_url_userinfo_credentials():
     assert "(https://registry.example/org/pkg/1.0.0.tar.gz)" in header
 
 
+def test_header_strips_userinfo_whose_password_holds_an_unencoded_at():
+    # RFC 3986 wants '@' percent-encoded inside userinfo, but tokens and
+    # passwords reach lockfiles verbatim. Stopping at the FIRST '@' would
+    # strip only "alice:s3" and leave "cret@" -- and the secret -- in the
+    # shared patch header.
+    dep = LockedDependency(
+        repo_url="org/pkg",
+        source="registry",
+        version="1.0.0",
+        source_url="https://alice:s3@cret@registry.example/org/pkg",
+        resolved_url="https://alice:s3@cret@registry.example/org/pkg/1.0.0.tar.gz",
+    )
+    header = _patch_header("org/pkg", dep)
+    assert "s3" not in header
+    assert "cret" not in header
+    assert "# source: https://registry.example/org/pkg" in header
+
+
 def test_header_leaves_urls_without_userinfo_intact():
     dep = LockedDependency(
         repo_url="org/pkg",
@@ -293,6 +311,40 @@ def test_crlf_source_is_skipped_not_exported(trees, monkeypatch):
     assert result.exported == []
     assert len(result.skipped) == 1
     assert "CRLF" in result.skipped[0].reason
+
+
+def test_build_id_stamped_deployment_exports_against_the_clean_source(trees, monkeypatch):
+    """A deployment that stamps a build-id header is still exportable.
+
+    The stamp is a deterministic deployment artifact, not user content:
+    it is present in both the replayed and the working-tree copy, and
+    :func:`_normalize` removes it from both sides of the diff. Requiring
+    the deployed bytes to equal the source bytes RAW would reject this
+    case -- so the guarantee the export actually needs is asserted here:
+    the diff's ``a`` side must be byte-identical to the on-disk source,
+    which is what makes ``git apply`` succeed.
+    """
+    stamp = b"<!-- Build ID: abc123 -->\n"
+    _write(trees["source"] / _SOURCE_REL, _ORIGINAL)
+    _write(trees["scratch"] / _DEPLOYED, stamp + _ORIGINAL)
+    _write(trees["project"] / _DEPLOYED, stamp + _EDITED)
+    lock = _lockfile_with_remote([_DEPLOYED])
+    _patch_materialize(monkeypatch, trees["source"])
+    key = _remote_key(lock)
+    findings = [DriftFinding(path=_DEPLOYED, kind="modified", package=key)]
+
+    result = build_patch_export(trees["project"], trees["scratch"], lock, findings)
+
+    assert result.skipped == []
+    assert result.exported == [ExportedEdit(_DEPLOYED, _SOURCE_REL, key)]
+    patch = result.patches[key]
+    # The stamp is a deployment artifact and must never appear in the
+    # diff body -- only the real edit does.
+    assert "Build ID" not in patch
+    assert "+rule two\n" in patch
+    # The context the hunk was built from is the raw source file itself.
+    context = [line[1:] for line in patch.splitlines(keepends=True) if line.startswith(" ")]
+    assert all(line.encode("utf-8") in _ORIGINAL for line in context)
 
 
 def test_identical_edits_to_two_deployed_copies_emit_one_diff(trees, monkeypatch):

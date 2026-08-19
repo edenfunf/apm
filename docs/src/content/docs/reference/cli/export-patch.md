@@ -2,7 +2,7 @@
 title: apm export-patch
 description: Export local edits to APM-managed files as patches against their source packages.
 sidebar:
-  order: 14
+  order: 27
 ---
 
 ## Synopsis
@@ -24,7 +24,7 @@ git -C path/to/package-clone checkout <base-commit>
 git -C path/to/package-clone apply path/to/apm-patches/<package>.patch
 ```
 
-Only verbatim-deployed files can be exported: a local edit maps cleanly back to its source only when the deployment copied that source byte-for-byte. Everything else is listed as skipped with the reason instead of producing a patch that would not apply:
+Only verbatim-deployed files can be exported: a local edit maps cleanly back to its source only when the deployment copied that source byte-for-byte, ignoring the differences `apm audit` already tolerates (build-id headers, CRLF, a BOM) -- those are normalized away on both sides, so they never reach the patch body. Everything else is listed as skipped with the reason instead of producing a patch that would not apply:
 
 - Deployments that transform their content (frontmatter rewrites for rule directories, compiled `AGENTS.md` output, aggregated `copilot-instructions.md` sections, files with resolved links).
 - Source files that are not normalization-clean (CRLF line endings, a UTF-8 BOM, or a build-id header): the deployed copy matches them only after normalization, so an exported diff could not be applied to the raw file.
@@ -63,7 +63,7 @@ apm export-patch --dry-run
 apm export-patch -o /tmp/spec-patches
 ```
 
-## See also
+## Related
 
 - [`apm audit`](../audit/) -- detect the drift this command exports.
 - [Drift and secure by default](../../../consumer/drift-and-secure-by-default/) -- why local edits to managed files are overwritten on the next install.
