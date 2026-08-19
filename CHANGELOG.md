@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`"skills": "./skills/engineering/tdd"`) still lands under its own leaf name
   instead of spilling a bare `SKILL.md` into the shared skills root.
   (closes #2530)
+- Plugin normalization now warns when two declared `skills` entries provide a
+  skill of the same name. Both entries merge onto `.apm/skills/<name>/` and
+  the last declared entry silently overwrote the first, so one skill vanished
+  with no diagnostic on any verbosity level. The install still completes with
+  the last declared copy (unchanged outcome); the warning names the skill and
+  both entries. Overlapping entries that resolve the name to the same source
+  directory (a container plus one of its own skills) stay quiet. (closes #2629)
 - Multi-target `apm compile` now avoids repeating expensive project analysis
   for each target, making multi-target runs scale like single-target runs
   without changing generated output. (closes #2482)

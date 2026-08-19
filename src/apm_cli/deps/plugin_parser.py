@@ -177,6 +177,35 @@ def _warn_skills_entry_holds_no_skill(entry: Path, plugin_path: Path) -> None:
     )
 
 
+def _declared_entry_label(entry: Path, plugin_path: Path) -> str:
+    """Render a declared entry as the plugin-relative path the author wrote."""
+    try:
+        return entry.relative_to(plugin_path).as_posix()
+    except ValueError:  # pragma: no cover - entries are verified inside the plugin
+        return entry.name
+
+
+def _warn_skills_name_collision(
+    name: str, prev_entry: Path, entry: Path, plugin_path: Path
+) -> None:
+    """Warn that two declared ``skills`` entries provide the same skill name.
+
+    Both land on ``.apm/skills/<name>/`` -- the one depth deployment and
+    ``--skill`` read -- and ``shutil.copytree(..., dirs_exist_ok=True)``
+    settles the collision by overwriting, so the later declared entry wins
+    and the earlier copy is silently gone. Issue #2629: a manifest ambiguous
+    about its own skill names deserves one line naming the skill and both
+    entries, not a clean-looking install missing a skill.
+    """
+    _surface_warning(
+        f"Plugin skills entries '{_declared_entry_label(prev_entry, plugin_path)}' "
+        f"and '{_declared_entry_label(entry, plugin_path)}' both provide skill "
+        f"'{name}'; only the copy from the last declared entry survives. "
+        f"Rename one skill or remove the duplicate entry.",
+        _logger,
+    )
+
+
 def parse_plugin_manifest(plugin_json_path: Path) -> dict[str, Any]:
     """Parse a plugin.json manifest file.
 
@@ -842,16 +871,40 @@ def _map_plugin_artifacts(
         declared = isinstance(manifest.get("skills"), (list, str))
         if skill_dirs:
             target_skills.mkdir(parents=True, exist_ok=True)
+            # skill name -> (declared entry, source skill dir) for names this
+            # manifest already provided. Two entries landing the same name on
+            # ``.apm/skills/<name>/`` collide and the copytree below settles
+            # it by overwriting -- surface that instead of losing a skill
+            # silently (#2629). Overlapping entries that resolve to the same
+            # source directory (``./skills/`` plus ``./skills/tdd``) are not
+            # collisions: both copies are the same skill.
+            provided: dict[str, tuple[Path, Path]] = {}
             for d in skill_dirs:
                 if declared and not _holds_skill_dirs(d):
                     dest = target_skills / d.name
-                    if not (d / "SKILL.md").is_file():
+                    if (d / "SKILL.md").is_file():
+                        entry_skills = {d.name: d}
+                    else:
                         # Neither shape: keep the contents isolated under the
                         # entry's own name, but do not let the dead end pass
                         # silently -- that silence is the #2530 symptom.
                         _warn_skills_entry_holds_no_skill(d, plugin_path)
+                        entry_skills = {}
                 else:
                     dest = target_skills
+                    try:
+                        entry_skills = {
+                            child.name: child
+                            for child in d.iterdir()
+                            if child.is_dir() and (child / "SKILL.md").is_file()
+                        }
+                    except OSError:
+                        entry_skills = {}
+                for name, src in entry_skills.items():
+                    prev = provided.get(name)
+                    if prev is not None and not _is_same_path(prev[1], src):
+                        _warn_skills_name_collision(name, prev[0], d, plugin_path)
+                    provided[name] = (d, src)
                 if _is_same_path(d, dest):
                     continue
                 shutil.copytree(d, dest, dirs_exist_ok=True, ignore=ignore_non_content)

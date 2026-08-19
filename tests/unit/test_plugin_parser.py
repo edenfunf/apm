@@ -389,6 +389,98 @@ class TestMapPluginArtifacts:
 
         assert "no SKILL.md" not in caplog.text
 
+    def test_declared_entries_with_same_skill_name_warn(self, tmp_path, caplog):
+        """Two entries providing the same skill name surface the collision.
+
+        Regression for #2629: both containers merge into ``.apm/skills/`` and
+        ``copytree(..., dirs_exist_ok=True)`` lets the last declared entry
+        overwrite the first, so one skill vanishes. The overwrite itself is
+        the documented last-wins outcome; what must not happen is silence.
+        """
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        for container, content in (("a", "# from a"), ("b", "# from b")):
+            skill = plugin_dir / container / "tdd"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(content, encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./a/", "./b/"]})
+
+        assert "both provide skill 'tdd'" in caplog.text
+        assert "'a'" in caplog.text
+        assert "'b'" in caplog.text
+        # Last declared entry wins the path -- the warning documents, not blocks.
+        assert (apm_dir / "skills" / "tdd" / "SKILL.md").read_text() == "# from b"
+
+    def test_container_and_direct_skill_entry_collision_warns(self, tmp_path, caplog):
+        """A direct skill entry colliding with a container's child warns too.
+
+        The two manifest shapes land on the same ``.apm/skills/<name>/`` path,
+        so the collision does not care which shape provided each copy.
+        """
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        via_container = plugin_dir / "a" / "tdd"
+        via_container.mkdir(parents=True)
+        (via_container / "SKILL.md").write_text("# from container", encoding="utf-8")
+        direct = plugin_dir / "b" / "tdd"
+        direct.mkdir(parents=True)
+        (direct / "SKILL.md").write_text("# direct", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./a/", "./b/tdd"]})
+
+        assert "both provide skill 'tdd'" in caplog.text
+        assert (apm_dir / "skills" / "tdd" / "SKILL.md").read_text() == "# direct"
+
+    def test_distinct_skill_names_across_entries_stay_quiet(self, tmp_path, caplog):
+        """Entries contributing different skill names are the healthy case."""
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        for container, name in (("a", "tdd"), ("b", "lint")):
+            skill = plugin_dir / container / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./a/", "./b/"]})
+
+        assert "both provide skill" not in caplog.text
+        assert (apm_dir / "skills" / "tdd" / "SKILL.md").read_text() == "# tdd"
+        assert (apm_dir / "skills" / "lint" / "SKILL.md").read_text() == "# lint"
+
+    def test_overlapping_entries_same_source_stay_quiet(self, tmp_path, caplog):
+        """A container plus one of its own skills is redundancy, not collision.
+
+        ``./skills/`` and ``./skills/tdd`` resolve the name to the same source
+        directory; both copies are byte-identical, so nothing is lost and a
+        warning would only teach authors to ignore warnings.
+        """
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        skill = plugin_dir / "skills" / "tdd"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# tdd", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+            _map_plugin_artifacts(
+                plugin_dir,
+                apm_dir,
+                manifest={"skills": ["./skills/", "./skills/tdd"]},
+            )
+
+        assert "both provide skill" not in caplog.text
+        assert (apm_dir / "skills" / "tdd" / "SKILL.md").read_text() == "# tdd"
+
     def test_custom_commands_path(self, tmp_path):
         """Manifest commands field redirects command discovery."""
         plugin_dir = tmp_path / "plugin"
