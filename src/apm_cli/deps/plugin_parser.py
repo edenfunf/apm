@@ -155,6 +155,29 @@ def _holds_skill_dirs(candidate: Path) -> bool:
         return False
 
 
+def _warn_skills_entry_holds_no_skill(entry: Path, plugin_path: Path) -> None:
+    """Warn that a declared ``skills`` entry can never yield a skill.
+
+    An entry with no ``SKILL.md`` at its root and none in any immediate child
+    is neither a skill nor a container of them: it is copied under its own
+    name, but nothing inside reaches ``.apm/skills/<name>/SKILL.md``, so it
+    stays invisible to deployment and to ``--skill``. Silence here is what
+    made #2530 expensive to diagnose -- the manifest looked wrong when only
+    the directory depth was -- so say it once, at normalization time.
+    """
+    try:
+        declared = entry.relative_to(plugin_path).as_posix()
+    except ValueError:  # pragma: no cover - entries are verified inside the plugin
+        declared = entry.name
+    _surface_warning(
+        f"Plugin skills entry '{declared}' has no SKILL.md at its root or in "
+        f"any immediate subdirectory; nothing under it will deploy or be "
+        f"selectable with --skill. Declare each skill directory, or place "
+        f"skills one level below the declared container.",
+        _logger,
+    )
+
+
 def parse_plugin_manifest(plugin_json_path: Path) -> dict[str, Any]:
     """Parse a plugin.json manifest file.
 
@@ -846,6 +869,11 @@ def _map_plugin_artifacts(
             for d in skill_dirs:
                 if declared and not _holds_skill_dirs(d):
                     dest = target_skills / d.name
+                    if not (d / "SKILL.md").is_file():
+                        # Neither shape: keep the contents isolated under the
+                        # entry's own name, but do not let the dead end pass
+                        # silently -- that silence is the #2530 symptom.
+                        _warn_skills_entry_holds_no_skill(d, plugin_path)
                 else:
                     dest = target_skills
                 if _is_same_path(d, dest):

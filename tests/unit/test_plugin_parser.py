@@ -1,6 +1,7 @@
 """Unit tests for plugin_parser.py and find_plugin_json helper."""
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -348,6 +349,45 @@ class TestMapPluginArtifacts:
         assert (normalized / "tdd" / "SKILL.md").read_text() == "# tdd"
         # Undeclared siblings stay out: the entry is a requirement, not a hint.
         assert not (normalized / "pairing").exists()
+
+    def test_declared_skills_entry_holding_no_skill_warns(self, tmp_path, caplog):
+        """An entry that is neither a skill nor a container must say so.
+
+        A container whose skills sit two levels down reaches no deployable
+        depth under either mapping. The copy stays put -- the entry keeps its
+        own name so unrecognized content stays out of the shared skills root
+        -- but the plugin author gets the one line that #2530 lacked instead
+        of an install that looks clean and deploys nothing.
+        """
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        buried = plugin_dir / "skills" / "engineering" / "tdd"
+        buried.mkdir(parents=True)
+        (buried / "SKILL.md").write_text("# tdd", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills/"]})
+
+        assert "skills" in caplog.text
+        assert "no SKILL.md" in caplog.text
+        assert "--skill" in caplog.text
+
+    def test_declared_skills_container_does_not_warn(self, tmp_path, caplog):
+        """The healthy shapes stay quiet -- a warning nobody can act on is noise."""
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        skill = plugin_dir / "skills" / "csharp-scripts"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# csharp-scripts", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills/"]})
+
+        assert "no SKILL.md" not in caplog.text
 
     def test_custom_commands_path(self, tmp_path):
         """Manifest commands field redirects command discovery."""
