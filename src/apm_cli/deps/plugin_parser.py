@@ -97,16 +97,8 @@ def _assert_safe_plugin_destination(apm_dir: Path) -> None:
         raise PluginIntegrityError(f"Refusing to normalize through symlinked directory: {apm_dir}")
 
 
-def _surface_warning(message: str, logger: logging.Logger) -> None:
-    """Emit a warning to both the stdlib logger and the rich console.
-
-    The ``apm`` stdlib logger has no handlers configured by default, so
-    ``logger.warning`` calls are silently dropped in non-debug runs. For
-    user-visible plugin-parse issues (skipped MCP servers, validation
-    failures), also route through ``_rich_warning`` so the user sees them
-    even without ``--verbose``. Falls back gracefully if Rich is unavailable.
-    """
-    logger.warning(message)
+def _surface_warning(message: str) -> None:
+    """Emit one user-visible plugin warning through the console."""
     try:  # noqa: SIM105
         _rich_warning(message, symbol="warning")
     except Exception:
@@ -188,7 +180,6 @@ def _warn_skills_entry_holds_no_skill(
         f"any immediate subdirectory; nothing under it will deploy or be "
         f"selectable with --skill. Declare each skill directory, or place "
         f"skills one level below the declared container.",
-        _logger,
     )
 
 
@@ -356,8 +347,7 @@ def synthesize_apm_yml_from_plugin(plugin_path: Path, manifest: dict[str, Any]) 
             # the #1666 symptom (transitive deps dropped with no diagnostic).
             _surface_warning(
                 f"Could not load existing apm.yml for merge; transitive "
-                f"dependencies may not be preserved: {exc}",
-                _logger,
+                f"dependencies may not be preserved: {exc}"
             )
 
     # Generate apm.yml from plugin metadata, merging with existing manifest
@@ -539,8 +529,7 @@ def _mcp_servers_to_apm_deps(servers: dict[str, Any], plugin_path: Path) -> list
         else:
             _surface_warning(
                 f"Skipping MCP server '{name}' from plugin "
-                f"'{plugin_path.name}': no 'command' or 'url'",
-                logger,
+                f"'{plugin_path.name}': no 'command' or 'url'"
             )
             continue
 
@@ -558,8 +547,7 @@ def _mcp_servers_to_apm_deps(servers: dict[str, Any], plugin_path: Path) -> list
             MCPDependency.from_dict(dep)
         except (ValueError, Exception) as exc:
             _surface_warning(
-                f"Skipping invalid MCP server '{name}' from plugin '{plugin_path.name}': {exc}",
-                logger,
+                f"Skipping invalid MCP server '{name}' from plugin '{plugin_path.name}': {exc}"
             )
             continue
 
@@ -720,14 +708,118 @@ def _lsp_servers_to_apm_deps(servers: dict[str, Any], plugin_path: Path) -> list
             LSPDependency.from_dict(dep)
         except Exception as exc:
             _surface_warning(
-                f"Skipping invalid LSP server '{name}' from plugin '{plugin_path.name}': {exc}",
-                logger,
+                f"Skipping invalid LSP server '{name}' from plugin '{plugin_path.name}': {exc}"
             )
             continue
 
         deps.append(dep)
 
     return deps
+
+
+def _is_same_path(source: Path, destination: Path) -> bool:
+    """Return whether two paths resolve to the same location."""
+    try:
+        return source.resolve() == destination.resolve()
+    except OSError:
+        return False
+
+
+def _map_plugin_skill_artifacts(
+    plugin_path: Path,
+    apm_dir: Path,
+    manifest: dict[str, Any],
+    skill_sources: list[Path],
+) -> None:
+    """Normalize plugin skill declarations into the canonical skills tree."""
+    from apm_cli.security.gate import ignore_non_content
+
+    target_skills = apm_dir / "skills"
+    _assert_no_symlink_descendants(target_skills)
+    skill_dirs = [source for source in skill_sources if source.is_dir()]
+    skill_files = [source for source in skill_sources if source.is_file()]
+    declared = isinstance(manifest.get("skills"), (list, str))
+    plugin_name = str(manifest.get("name") or plugin_path.name)
+    expected_target_names: set[str] = set()
+    if skill_dirs:
+        from ..integration.skill_integrator import normalize_skill_name, validate_skill_name
+
+        claimed_names: dict[str, Path] = {}
+        copy_specs: list[tuple[Path, Path]] = []
+        for source_dir in skill_dirs:
+            holds_skill_dirs = _holds_skill_dirs(source_dir)
+            if declared and not holds_skill_dirs:
+                declared_manifest = source_dir / "SKILL.md"
+                deployable_sources = (
+                    ((source_dir.name, source_dir),)
+                    if not declared_manifest.is_symlink() and declared_manifest.is_file()
+                    else ()
+                )
+                destination = target_skills / source_dir.name
+                expected_target_names.add(source_dir.name)
+            else:
+                deployable_sources = tuple(
+                    (child.name, child)
+                    for child in source_dir.iterdir()
+                    if not child.is_symlink()
+                    and child.is_dir()
+                    and not (child / "SKILL.md").is_symlink()
+                    and (child / "SKILL.md").is_file()
+                )
+                destination = target_skills
+                expected_target_names.update(name for name, _ in deployable_sources)
+            for raw_name, source in deployable_sources:
+                canonical_name = normalize_skill_name(raw_name)
+                valid_name, _ = validate_skill_name(canonical_name)
+                if not canonical_name or not valid_name:
+                    raise PluginIntegrityError(
+                        f"Plugin '{plugin_name}' skill declaration "
+                        f"'{source.relative_to(plugin_path).as_posix()}' has no valid "
+                        "deployable name. Rename the skill and reinstall."
+                    )
+                previous = claimed_names.get(canonical_name)
+                if previous is not None and previous != source:
+                    previous_path = previous.relative_to(plugin_path).as_posix()
+                    source_path = source.relative_to(plugin_path).as_posix()
+                    raise PluginIntegrityError(
+                        f"Plugin '{plugin_name}' skill declarations '{previous_path}' and "
+                        f"'{source_path}' collide on deployed name '{canonical_name}'. "
+                        "Rename one skill or remove one declaration, then reinstall."
+                    )
+                claimed_names[canonical_name] = source
+            if declared and not holds_skill_dirs:
+                skill_manifest = source_dir / "SKILL.md"
+                if skill_manifest.is_symlink() or not skill_manifest.is_file():
+                    _warn_skills_entry_holds_no_skill(source_dir, plugin_path, plugin_name)
+            copy_specs.append((source_dir, destination))
+
+        target_skills.mkdir(parents=True, exist_ok=True)
+        for source_dir, destination in copy_specs:
+            if _is_same_path(source_dir, destination):
+                continue
+            shutil.copytree(
+                source_dir,
+                destination,
+                dirs_exist_ok=True,
+                ignore=ignore_non_content,
+            )
+    if skill_files:
+        target_skills.mkdir(parents=True, exist_ok=True)
+        for source_file in skill_files:
+            if declared:
+                expected_target_names.add(source_file.name)
+            destination = target_skills / source_file.name
+            if _is_same_path(source_file, destination):
+                continue
+            shutil.copy2(source_file, destination)
+    if declared and target_skills.is_dir():
+        for child in target_skills.iterdir():
+            if child.name in expected_target_names:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
 
 
 def _map_plugin_artifacts(
@@ -804,16 +896,6 @@ def _map_plugin_artifacts(
             return [default]
         return []
 
-    # Helper: True when *src* and *dst* resolve to the same filesystem path
-    # (e.g. a manifest entry pointing at a file already inside the target).
-    # Copying onto self raises ``shutil.SameFileError`` and ``shutil.copytree``
-    # over identical directories triggers it per-file, so callers must skip.
-    def _is_same_path(src: Path, dst: Path) -> bool:
-        try:
-            return src.resolve() == dst.resolve()
-        except OSError:
-            return False
-
     # Map agents/
     # Unlike skills (which are named directories containing SKILL.md), agents
     # are flat files  -- each .md is one agent.  So we always merge directory
@@ -839,76 +921,7 @@ def _map_plugin_artifacts(
     # Map skills/
     skill_sources = _resolve_sources("skills", "skills")
     if skill_sources:
-        target_skills = apm_dir / "skills"
-        _assert_no_symlink_descendants(target_skills)
-        skill_dirs = [s for s in skill_sources if s.is_dir()]
-        skill_files = [s for s in skill_sources if s.is_file()]
-
-        # A declared ``skills`` entry is either the skill itself (``SKILL.md``
-        # at its root, e.g. ``./skills/engineering/tdd``) or a container
-        # holding one skill per child (the conventional ``./skills/``).
-        # Classify per entry rather than per manifest shape: naming a
-        # container after itself buries every skill one level too deep, while
-        # merging a lone skill spills a bare ``SKILL.md`` into the shared root
-        # under no name at all. Either way ``--skill`` sees nothing, because
-        # ``.apm/skills/<name>/SKILL.md`` is the exact depth that deployment,
-        # ``--skill`` enumeration, the bin/ security scan and primitive
-        # counting all read. See issue #2530.
-        #
-        # Undeclared discovery keeps merging unconditionally: the default
-        # ``skills/`` is the convention container by definition.
-        declared = isinstance(manifest.get("skills"), (list, str))
-        if skill_dirs:
-            target_skills.mkdir(parents=True, exist_ok=True)
-            claimed_names: dict[str, Path] = {}
-            for d in skill_dirs:
-                if declared and not _holds_skill_dirs(d):
-                    declared_manifest = d / "SKILL.md"
-                    deployable_names = (
-                        (d.name,)
-                        if not declared_manifest.is_symlink() and declared_manifest.is_file()
-                        else ()
-                    )
-                else:
-                    deployable_names = tuple(
-                        child.name
-                        for child in d.iterdir()
-                        if not child.is_symlink()
-                        and child.is_dir()
-                        and not (child / "SKILL.md").is_symlink()
-                        and (child / "SKILL.md").is_file()
-                    )
-                for name in deployable_names:
-                    previous = claimed_names.get(name)
-                    if previous is not None and previous != d:
-                        raise PluginIntegrityError(
-                            f"Plugin skill declarations collide on normalized name '{name}'"
-                        )
-                    claimed_names[name] = d
-                if declared and not _holds_skill_dirs(d):
-                    dest = target_skills / d.name
-                    skill_manifest = d / "SKILL.md"
-                    if skill_manifest.is_symlink() or not skill_manifest.is_file():
-                        # Neither shape: keep the contents isolated under the
-                        # entry's own name, but do not let the dead end pass
-                        # silently -- that silence is the #2530 symptom.
-                        _warn_skills_entry_holds_no_skill(
-                            d,
-                            plugin_path,
-                            str(manifest.get("name") or plugin_path.name),
-                        )
-                else:
-                    dest = target_skills
-                if _is_same_path(d, dest):
-                    continue
-                shutil.copytree(d, dest, dirs_exist_ok=True, ignore=ignore_non_content)
-        if skill_files:
-            target_skills.mkdir(parents=True, exist_ok=True)
-            for f in skill_files:
-                dst = target_skills / f.name
-                if _is_same_path(f, dst):
-                    continue
-                shutil.copy2(f, dst)
+        _map_plugin_skill_artifacts(plugin_path, apm_dir, manifest, skill_sources)
 
     # Map commands/ -> .apm/prompts/ (normalize .md -> .prompt.md)
     command_sources = _resolve_sources("commands", "commands")

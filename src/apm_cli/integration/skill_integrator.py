@@ -743,6 +743,11 @@ class SkillIntegrator(BaseIntegrator):
         else:
             rel_prefix = target_skills_root.name
 
+        from apm_cli.utils.path_security import ensure_path_within
+
+        deployable_skills: list[tuple[Path, str, Path]] = []
+        claimed_names: dict[str, Path] = {}
+        target_root_resolved = target_skills_root.resolve()
         for sub_skill_path in sub_skills_dir.iterdir():
             if sub_skill_path.is_symlink() or not sub_skill_path.is_dir():
                 continue
@@ -756,6 +761,28 @@ class SkillIntegrator(BaseIntegrator):
             is_valid, _ = validate_skill_name(raw_sub_name)
             sub_name = raw_sub_name if is_valid else normalize_skill_name(raw_sub_name)
             target = target_skills_root / sub_name
+            if not sub_name:
+                raise ValueError(
+                    f"Skill '{raw_sub_name}' from package '{parent_name}' has no valid "
+                    "deployable name. Rename the skill and reinstall."
+                )
+            target_resolved = ensure_path_within(target, target_skills_root)
+            if target_resolved == target_root_resolved:
+                raise ValueError(
+                    f"Skill '{raw_sub_name}' from package '{parent_name}' resolves to the "
+                    "shared skills root. Rename the skill and reinstall."
+                )
+            previous = claimed_names.get(sub_name)
+            if previous is not None and previous != sub_skill_path:
+                raise ValueError(
+                    f"Skills '{previous.name}' and '{raw_sub_name}' from package "
+                    f"'{parent_name}' collide on deployed name '{sub_name}'. "
+                    "Rename one skill and reinstall."
+                )
+            claimed_names[sub_name] = sub_skill_path
+            deployable_skills.append((sub_skill_path, sub_name, target))
+
+        for sub_skill_path, sub_name, target in deployable_skills:
             rel_path = f"{rel_prefix}/{sub_name}"
             if target.exists():
                 # Content-identical: skip entirely (no copy, no warning)
@@ -888,6 +915,7 @@ class SkillIntegrator(BaseIntegrator):
         self,
         package_info,
         project_root: Path,
+        sub_skills_dir: Path | None = None,
         diagnostics=None,
         managed_files=None,
         force: bool = False,
@@ -906,6 +934,7 @@ class SkillIntegrator(BaseIntegrator):
         Args:
             package_info: PackageInfo object with package metadata.
             project_root: Root directory of the project.
+            sub_skills_dir: Canonical source returned by ``skill_source_dir``.
             targets: Optional explicit list of TargetProfile objects.
             skill_subset: Optional tuple of skill names or paths to install (None = all).
 
@@ -914,7 +943,8 @@ class SkillIntegrator(BaseIntegrator):
         """
         self.init_link_resolver(package_info, project_root)
         package_path = package_info.install_path
-        sub_skills_dir = package_path / ".apm" / "skills"
+        if sub_skills_dir is None:
+            sub_skills_dir = self.skill_source_dir(package_info)
         if not sub_skills_dir.is_dir():
             return 0, []
 
@@ -1397,6 +1427,9 @@ class SkillIntegrator(BaseIntegrator):
         Returns:
             SkillIntegrationResult: Results of the integration operation
         """
+        package_path = package_info.install_path
+        source_dir = self.skill_source_dir(package_info)
+
         # Check if package type allows skill installation (T4 routing)
         # SKILL and HYBRID -> install as skill
         # INSTRUCTIONS and PROMPTS -> skip skill installation
@@ -1406,6 +1439,7 @@ class SkillIntegrator(BaseIntegrator):
             sub_skills_count, sub_deployed = self._promote_sub_skills_standalone(
                 package_info,
                 project_root,
+                source_dir,
                 diagnostics=diagnostics,
                 managed_files=managed_files,
                 force=force,
@@ -1439,8 +1473,6 @@ class SkillIntegrator(BaseIntegrator):
                     references_copied=0,
                     links_resolved=0,
                 )
-
-        package_path = package_info.install_path
 
         # MARKETPLACE_PLUGIN: deploy bin/ executables + plugin manifest BEFORE
         # skill routing.  bin/ deployment is orthogonal to whether the plugin
@@ -1496,7 +1528,7 @@ class SkillIntegrator(BaseIntegrator):
         # ``available_skill_names`` -- so a ``--skill`` value can never be
         # validated against a directory other than the one that deploys.
         root_skills_dir = package_path / "skills"
-        if self.skill_source_dir(package_info) == root_skills_dir:
+        if source_dir == root_skills_dir:
             return self._merge_bin_paths(
                 self._integrate_skill_bundle(
                     package_info,
@@ -1519,6 +1551,7 @@ class SkillIntegrator(BaseIntegrator):
         sub_skills_count, sub_deployed = self._promote_sub_skills_standalone(
             package_info,
             project_root,
+            source_dir,
             diagnostics=diagnostics,
             managed_files=managed_files,
             force=force,

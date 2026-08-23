@@ -1564,10 +1564,21 @@ methods = {
     node.name: node
     for node in ast.walk(tree)
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    and node.name in {"skill_source_dir", "available_skill_names", "integrate_package_skill"}
+    and node.name
+    in {
+        "skill_source_dir",
+        "available_skill_names",
+        "integrate_package_skill",
+        "_promote_sub_skills_standalone",
+    }
 }
 errors = []
-if set(methods) != {"skill_source_dir", "available_skill_names", "integrate_package_skill"}:
+if set(methods) != {
+    "skill_source_dir",
+    "available_skill_names",
+    "integrate_package_skill",
+    "_promote_sub_skills_standalone",
+}:
     errors.append("required methods are missing")
 
 
@@ -1593,6 +1604,25 @@ if "integrate_package_skill" in methods and not calls_owner(
     methods["integrate_package_skill"], "self"
 ):
     errors.append("integrate_package_skill must call self.skill_source_dir(package_info)")
+if "integrate_package_skill" in methods:
+    standalone_calls = [
+        call
+        for call in ast.walk(methods["integrate_package_skill"])
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_promote_sub_skills_standalone"
+    ]
+    if not standalone_calls or any(
+        len(call.args) < 3
+        or not isinstance(call.args[2], ast.Name)
+        or call.args[2].id != "source_dir"
+        for call in standalone_calls
+    ):
+        errors.append("standalone deployment must receive the canonical source_dir")
+if "_promote_sub_skills_standalone" in methods:
+    standalone_source = ast.unparse(methods["_promote_sub_skills_standalone"])
+    if "package_path / '.apm' / 'skills'" in standalone_source:
+        errors.append("standalone deployment must not reconstruct the normalized source path")
 if "skill_source_dir" in methods:
     owner_source = ast.unparse(methods["skill_source_dir"])
     if "PackageType.MARKETPLACE_PLUGIN" not in owner_source:

@@ -1,9 +1,9 @@
 """Unit tests for plugin_parser.py and find_plugin_json helper."""
 
 import json
-import logging
 import os  # noqa: F401
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -350,7 +350,7 @@ class TestMapPluginArtifacts:
         # Undeclared siblings stay out: the entry is a requirement, not a hint.
         assert not (normalized / "pairing").exists()
 
-    def test_declared_skills_entry_holding_no_skill_warns(self, tmp_path, caplog):
+    def test_declared_skills_entry_holding_no_skill_warns(self, tmp_path):
         """An entry that is neither a skill nor a container must say so.
 
         A container whose skills sit two levels down reaches no deployable
@@ -367,13 +367,14 @@ class TestMapPluginArtifacts:
 
         apm_dir = plugin_dir / ".apm"
         apm_dir.mkdir()
-        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+        with patch("apm_cli.deps.plugin_parser._rich_warning") as warning:
             _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills/"]})
 
-        assert "Plugin 'plugin'" in caplog.text
-        assert "skills" in caplog.text
-        assert "no SKILL.md" in caplog.text
-        assert "--skill" in caplog.text
+        message = warning.call_args.args[0]
+        assert "Plugin 'plugin'" in message
+        assert "skills" in message
+        assert "no SKILL.md" in message
+        assert "--skill" in message
 
     def test_colliding_declared_skill_containers_fail_closed(self, tmp_path):
         """Two declared containers cannot silently merge one skill name."""
@@ -393,6 +394,64 @@ class TestMapPluginArtifacts:
                 apm_dir,
                 manifest={"skills": ["./first", "./second"]},
             )
+
+    @pytest.mark.parametrize(
+        ("first_name", "second_name"),
+        [
+            ("Foo Bar", "foo-bar"),
+            (f"{'a' * 64}x", f"{'a' * 64}y"),
+        ],
+    )
+    def test_canonical_declared_skill_collisions_fail_closed(
+        self,
+        tmp_path,
+        first_name,
+        second_name,
+    ):
+        """Collision checks use the final deployed identity, including truncation."""
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        for container_name, skill_name in (
+            ("first", first_name),
+            ("second", second_name),
+        ):
+            skill = plugin_dir / container_name / skill_name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {container_name}", encoding="utf-8")
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+
+        with pytest.raises(PluginIntegrityError, match="Rename one skill"):
+            _map_plugin_artifacts(
+                plugin_dir,
+                apm_dir,
+                manifest={
+                    "name": "canonical-collision",
+                    "skills": ["./first", "./second"],
+                },
+            )
+
+        assert not (apm_dir / "skills").exists()
+
+    def test_empty_canonical_skill_name_fails_before_destination_mutation(self, tmp_path):
+        """An empty normalized name cannot alias the shared skills root."""
+        plugin_dir = tmp_path / "plugin"
+        skill = plugin_dir / "skills" / "!!!"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# invalid", encoding="utf-8")
+        apm_dir = plugin_dir / ".apm"
+        existing = apm_dir / "skills" / "existing"
+        existing.mkdir(parents=True)
+        (existing / "SKILL.md").write_text("# existing", encoding="utf-8")
+
+        with pytest.raises(PluginIntegrityError, match="no valid deployable name"):
+            _map_plugin_artifacts(
+                plugin_dir,
+                apm_dir,
+                manifest={"name": "empty-name", "skills": ["./skills"]},
+            )
+
+        assert (existing / "SKILL.md").read_text(encoding="utf-8") == "# existing"
 
     def test_symlinked_apm_directory_cannot_redirect_normalization(self, tmp_path):
         """A plugin-controlled .apm symlink must not redirect artifact writes."""
@@ -414,7 +473,7 @@ class TestMapPluginArtifacts:
 
         assert not (outside / "skills").exists()
 
-    def test_declared_skills_container_does_not_warn(self, tmp_path, caplog):
+    def test_declared_skills_container_does_not_warn(self, tmp_path):
         """The healthy shapes stay quiet -- a warning nobody can act on is noise."""
         plugin_dir = tmp_path / "plugin"
         plugin_dir.mkdir()
@@ -424,10 +483,10 @@ class TestMapPluginArtifacts:
 
         apm_dir = plugin_dir / ".apm"
         apm_dir.mkdir()
-        with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
+        with patch("apm_cli.deps.plugin_parser._rich_warning") as warning:
             _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills/"]})
 
-        assert "no SKILL.md" not in caplog.text
+        warning.assert_not_called()
 
     def test_custom_commands_path(self, tmp_path):
         """Manifest commands field redirects command discovery."""
@@ -1567,8 +1626,6 @@ class TestSynthesizePreservesExistingManifest:
         ``_surface_warning`` rather than swallowed, otherwise the malformed
         file re-creates the exact #1666 symptom with zero diagnostic output.
         """
-        from unittest.mock import patch
-
         # Write syntactically invalid YAML (unbalanced bracket triggers a
         # yaml.YAMLError inside load_yaml).
         (tmp_path / "apm.yml").write_text("name: bad\ndependencies: [unterminated\n")

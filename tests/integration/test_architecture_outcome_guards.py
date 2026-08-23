@@ -248,6 +248,9 @@ def test_plugin_manifest_skill_set_beats_undeclared_root_bundle(
         skill = plugin / "skills" / name
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+    pre_normalized = plugin / ".apm" / "skills" / "pre-normalized-undeclared"
+    pre_normalized.mkdir(parents=True)
+    (pre_normalized / "SKILL.md").write_text("# undeclared\n", encoding="utf-8")
     monkeypatch.chdir(consumer)
     monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
 
@@ -262,11 +265,13 @@ def test_plugin_manifest_skill_set_beats_undeclared_root_bundle(
     assert accepted.exit_code == 0, accepted.output
     assert (consumer / ".claude" / "skills" / "declared" / "SKILL.md").is_file()
     assert not (consumer / ".claude" / "skills" / "undeclared").exists()
+    assert not (consumer / ".claude" / "skills" / "pre-normalized-undeclared").exists()
 
     full_install = CliRunner().invoke(cli, ["install"])
 
     assert full_install.exit_code == 0, full_install.output
     assert not (consumer / ".claude" / "skills" / "undeclared").exists()
+    assert not (consumer / ".claude" / "skills" / "pre-normalized-undeclared").exists()
 
 
 def test_declared_string_skill_installs_from_normalized_source(
@@ -298,6 +303,43 @@ def test_declared_string_skill_installs_from_normalized_source(
     assert (consumer / ".claude" / "skills" / "tdd" / "SKILL.md").is_file()
 
 
+def test_normalized_declared_skill_name_collision_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two declarations with one deployed identity cannot overwrite each other."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {
+            "name": "colliding-skills",
+            "version": "1.0.0",
+            "skills": ["./one/Foo Bar", "./two/foo-bar"],
+        },
+    )
+    for relative in ("one/Foo Bar", "two/foo-bar"):
+        skill = plugin / relative
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"# {relative}\n", encoding="utf-8")
+    existing = consumer / ".claude" / "skills" / "existing"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("# existing\n", encoding="utf-8")
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install"])
+
+    assert result.exit_code != 0, result.output
+    assert "collide on deployed name 'foo-bar'" in result.output
+    assert "colliding-skills" in result.output
+    assert "one/Foo Bar" in result.output
+    assert "two/foo-bar" in result.output
+    assert (existing / "SKILL.md").read_text(encoding="utf-8") == "# existing\n"
+
+
 def test_malformed_declared_skills_warns_during_install(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -325,6 +367,7 @@ def test_malformed_declared_skills_warns_during_install(
 
     assert result.exit_code == 0, result.output
     assert "Plugin 'buried-skills' skills entry 'skills'" in result.output
+    assert result.output.count("Plugin 'buried-skills' skills entry 'skills'") == 1
     assert "no SKILL.md" in result.output
     assert "--skill" in result.output
 
@@ -352,6 +395,26 @@ def test_symlinked_skill_source_is_not_deployable(tmp_path: Path) -> None:
     assert count == 0
     assert deployed == []
     assert not (target / "linked").exists()
+
+
+def test_empty_normalized_skill_name_cannot_replace_target_root(tmp_path: Path) -> None:
+    """A source name that normalizes empty must not alias the shared root."""
+    from apm_cli.integration.skill_integrator import SkillIntegrator
+
+    source = tmp_path / "source"
+    malicious = source / "!!!"
+    malicious.mkdir(parents=True)
+    (malicious / "SKILL.md").write_text("# payload\n", encoding="utf-8")
+    target = tmp_path / "target"
+    existing = target / "existing"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("# existing\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no valid deployable name"):
+        SkillIntegrator._promote_sub_skills(source, target, "malicious-package")
+
+    assert (existing / "SKILL.md").read_text(encoding="utf-8") == "# existing\n"
+    assert not (target / "SKILL.md").exists()
 
 
 def test_skill_source_routing_has_one_static_owner() -> None:
