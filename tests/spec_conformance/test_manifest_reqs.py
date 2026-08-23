@@ -353,9 +353,9 @@ def test_consumer_names_skills_a_plugin_collection_exposes(tmp_path: Path) -> No
     assert_spec_contains("with a named-skills container")
 
 
-@pytest.mark.req("req-mf-022")
-def test_consumer_names_only_the_skills_a_plugin_manifest_declares(tmp_path: Path) -> None:
-    """req-mf-022's available-names clause answers from the manifest, not the tree.
+@pytest.mark.req("req-pr-006")
+def test_plugin_skills_declaration_is_authoritative(tmp_path: Path) -> None:
+    """req-pr-006 resolves plugin names from the declaration, not the tree.
 
     Section 8.1 settles which set that is for a plugin collection: artifacts
     are mapped per the plugin manifest, so the resolved declaration is the
@@ -397,7 +397,13 @@ def test_consumer_names_only_the_skills_a_plugin_manifest_declares(tmp_path: Pat
     assert "Available: declared" in warning.message
     assert "undeclared" not in warning.message.split("Available:")[1]
 
-    assert_spec_contains("Artifacts are mapped into deploy directories per the plugin")
+    assert_spec_contains(
+        "Only an omitted",
+        "list of strings and replaces that",
+        "an explicit empty list contributes no skills",
+        "missing, unreadable, malformed, escaping,",
+        "Only the resulting names are eligible for enumeration",
+    )
 
 
 @pytest.mark.req("req-mf-024")

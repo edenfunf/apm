@@ -16,6 +16,7 @@ from apm_cli.deps.plugin_parser import (
     _map_plugin_artifacts,
     _mcp_servers_to_apm_deps,
     normalize_plugin_directory,
+    normalized_plugin_skill_sources,
     parse_plugin_manifest,
     synthesize_apm_yml_from_plugin,
     validate_plugin_package,
@@ -214,6 +215,133 @@ class TestMapPluginArtifacts:
         _map_plugin_artifacts(plugin_dir, apm_dir)
 
         assert (apm_dir / "skills" / "my-skill" / "SKILL.md").exists()
+
+    def test_skill_receipt_reconciles_removed_declarations(self, tmp_path):
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        for name in ("alpha", "beta"):
+            skill = plugin_dir / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        _map_plugin_artifacts(plugin_dir, apm_dir, {"skills": ["./skills/"]})
+        assert set(normalized_plugin_skill_sources(plugin_dir)[0]) == {"alpha", "beta"}
+
+        _map_plugin_artifacts(plugin_dir, apm_dir, {"skills": []})
+
+        sources, declared = normalized_plugin_skill_sources(plugin_dir)
+        assert sources == {}
+        assert declared is True
+        assert not (apm_dir / "skills" / "alpha").exists()
+        assert not (apm_dir / "skills" / "beta").exists()
+
+    def test_skill_receipt_removes_prior_skills_for_file_only_declaration(self, tmp_path):
+        """A file-only declaration must remove prior parser-owned skill directories."""
+        plugin_dir = tmp_path / "plugin"
+        for name in ("alpha", "beta"):
+            skill = plugin_dir / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        _map_plugin_artifacts(plugin_dir, apm_dir, {"skills": ["./skills/"]})
+        (plugin_dir / "loose.md").write_text("# not a skill\n", encoding="utf-8")
+        _map_plugin_artifacts(plugin_dir, apm_dir, {"skills": ["./loose.md"]})
+
+        assert normalized_plugin_skill_sources(plugin_dir) == ({}, True)
+        assert not (apm_dir / "skills" / "alpha").exists()
+        assert not (apm_dir / "skills" / "beta").exists()
+
+    def test_skill_receipt_preserves_nested_declared_source(self, tmp_path):
+        plugin_dir = tmp_path / "plugin"
+        skill = plugin_dir / "skills" / "engineering" / "tdd"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# tdd", encoding="utf-8")
+
+        _map_plugin_artifacts(
+            plugin_dir,
+            plugin_dir / ".apm",
+            {"skills": ["./skills/engineering/tdd"]},
+        )
+
+        sources, declared = normalized_plugin_skill_sources(plugin_dir)
+        assert declared is True
+        assert sources == {"tdd": skill}
+        assert (plugin_dir / ".apm" / "skills" / "tdd" / "SKILL.md").is_file()
+
+    def test_duplicate_declared_skill_leaf_names_fail_closed(self, tmp_path):
+        plugin_dir = tmp_path / "plugin"
+        for parent in ("engineering", "operations"):
+            skill = plugin_dir / "skills" / parent / "runbook"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {parent}", encoding="utf-8")
+
+        _map_plugin_artifacts(
+            plugin_dir,
+            plugin_dir / ".apm",
+            {"skills": ["./skills/engineering/runbook", "./skills/operations/runbook"]},
+        )
+
+        sources, declared = normalized_plugin_skill_sources(plugin_dir)
+        assert declared is True
+        assert sources == {}
+
+    def test_malformed_skills_declaration_disables_default_discovery(self, tmp_path):
+        plugin_dir = tmp_path / "plugin"
+        skill = plugin_dir / "skills" / "alpha"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# alpha", encoding="utf-8")
+
+        _map_plugin_artifacts(plugin_dir, plugin_dir / ".apm", {"skills": {"path": "./skills"}})
+
+        sources, declared = normalized_plugin_skill_sources(plugin_dir)
+        assert declared is False
+        assert sources == {}
+
+    def test_skill_receipt_ignores_untracked_staged_normalized_skill(self, tmp_path):
+        plugin_dir = tmp_path / "plugin"
+        staged = plugin_dir / ".apm" / "skills" / "untracked"
+        staged.mkdir(parents=True)
+        (staged / "SKILL.md").write_text("# untracked", encoding="utf-8")
+
+        _map_plugin_artifacts(plugin_dir, plugin_dir / ".apm", {"skills": []})
+
+        assert normalized_plugin_skill_sources(plugin_dir) == ({}, True)
+
+    def test_plugin_artifact_mapping_rejects_symlinked_apm_destination(self, tmp_path):
+        """A plugin cannot redirect normalization cleanup through ``.apm``."""
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        external = tmp_path / "external"
+        sentinel = external / "skills" / "sentinel"
+        sentinel.mkdir(parents=True)
+        (sentinel / "SKILL.md").write_text("# sentinel", encoding="utf-8")
+        try:
+            (plugin_dir / ".apm").symlink_to(external, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        with pytest.raises(PluginIntegrityError, match="symlinked destination"):
+            _map_plugin_artifacts(plugin_dir, plugin_dir / ".apm", {"skills": []})
+
+        assert (sentinel / "SKILL.md").is_file()
+
+    def test_plugin_artifact_mapping_canonicalizes_a_symlinked_plugin_root(self, tmp_path):
+        """A safe symlink to the plugin root still yields a valid receipt."""
+        plugin_dir = tmp_path / "plugin"
+        skill = plugin_dir / "skills" / "alpha"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# alpha", encoding="utf-8")
+        alias = tmp_path / "plugin-alias"
+        try:
+            alias.symlink_to(plugin_dir, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        _map_plugin_artifacts(alias, alias / ".apm", {"skills": ["./skills/alpha"]})
+
+        assert normalized_plugin_skill_sources(alias) == ({"alpha": skill}, True)
 
     def test_map_commands_to_prompts(self, tmp_path):
         plugin_dir = tmp_path / "plugin"

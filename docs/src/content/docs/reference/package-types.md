@@ -220,6 +220,13 @@ deploys `search` and nothing else, and a skill declared outside `skills/`
 deploys even though no scan would have found it. Only an omitted key falls
 back to scanning the conventional directory.
 
+This is a migration point for existing plugin authors. A string or list is
+exhaustive after normalization, including a declared container with one skill
+per immediate child. `"skills": []` intentionally deploys no skills. When that
+empty declaration shadows root `skills/` entries, APM emits one diagnostic that
+names the package and tells you to declare the skills (or their container), or
+remove the key to restore discovery.
+
 **Marketplace version checks:** a local Plugin collection may omit `apm.yml`.
 For `apm pack --check-versions`, APM uses `plugin.json`'s `version` only when
 `apm.yml` is absent. See [Versioning strategies](../../producer/versioning-strategies/)

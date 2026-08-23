@@ -204,6 +204,7 @@ def test_plugin_declaration_decides_which_skills_root_copy_stays_the_source(
     byte-identical to the normalized one but sits a level higher, so relative
     links leaving the bundle keep resolving against the package root.
     """
+    from apm_cli.deps.plugin_parser import _map_plugin_artifacts
     from apm_cli.integration.skill_integrator import SkillIntegrator
     from apm_cli.models.validation import PackageType
 
@@ -212,19 +213,21 @@ def test_plugin_declaration_decides_which_skills_root_copy_stays_the_source(
         skill = package / "skills" / name
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
-    # What normalization resolved the manifest to: one skill that also lives in
-    # the root container, and one declared from outside it.
-    for name in ("declared", "outside"):
-        skill = package / ".apm" / "skills" / name
-        skill.mkdir(parents=True)
-        (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+    outside = package / "extra-skills" / "outside"
+    outside.mkdir(parents=True)
+    (outside / "SKILL.md").write_text("# outside\n", encoding="utf-8")
+    _map_plugin_artifacts(
+        package,
+        package / ".apm",
+        {"skills": ["./skills/declared", "./extra-skills/outside"]},
+    )
 
     info = MagicMock(install_path=package, package_type=PackageType.MARKETPLACE_PLUGIN)
 
     assert SkillIntegrator.available_skill_names(info) == frozenset({"declared", "outside"})
     assert SkillIntegrator.skill_source_paths(package, PackageType.MARKETPLACE_PLUGIN) == {
         "declared": package / "skills" / "declared",
-        "outside": package / ".apm" / "skills" / "outside",
+        "outside": package / "extra-skills" / "outside",
     }
 
 
@@ -295,6 +298,35 @@ def test_plugin_empty_skills_declaration_resolves_to_nothing(
     assert SkillIntegrator.available_skill_names(info) == frozenset()
 
 
+def test_staged_plugin_skill_is_not_promoted_after_empty_declaration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A staged normalized skill cannot bypass an empty parser receipt."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {"name": "staged-skills", "version": "1.0.0", "skills": []},
+    )
+    staged = plugin / ".apm" / "skills" / "staged"
+    staged.mkdir(parents=True)
+    (staged / "SKILL.md").write_text(
+        "---\nname: staged\ndescription: d\n---\n# staged\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install"])
+
+    assert result.exit_code == 0, result.output
+    assert "declares no deployable skills" not in result.output
+    assert not (consumer / ".claude" / "skills" / "staged").exists()
+
+
 def test_plugin_declaring_no_skills_says_which_ones_it_shadowed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -363,36 +395,23 @@ def test_plugin_without_any_skills_stays_quiet(
 def test_skill_enumeration_falls_back_to_the_normalized_container(
     tmp_path: Path,
 ) -> None:
-    """The ``.apm/skills/`` fallback is the route every plugin package takes.
-
-    A root ``skills/`` bundle wins only while it actually holds a skill. With
-    no such bundle -- or with one carrying no ``SKILL.md`` at all -- routing
-    must fall back to the normalized container ``_map_plugin_artifacts``
-    writes, or ``--skill`` is back to enumerating nothing (#2530).
-    """
+    """Parser-authorized normalized skills remain enumerable (#2530)."""
+    from apm_cli.deps.plugin_parser import _map_plugin_artifacts
     from apm_cli.integration.skill_integrator import SkillIntegrator
     from apm_cli.models.validation import PackageType
 
     package = tmp_path / "pkg"
-    normalized = package / ".apm" / "skills"
     for name in ("csharp-scripts", "dotnet-pinvoke"):
-        skill = normalized / name
+        skill = package / "skills" / name
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+    _map_plugin_artifacts(package, package / ".apm", {"skills": "./skills"})
+    normalized = package / ".apm" / "skills"
 
     info = MagicMock(install_path=package, package_type=PackageType.MARKETPLACE_PLUGIN)
     expected = frozenset({"csharp-scripts", "dotnet-pinvoke"})
 
-    assert SkillIntegrator._skill_source_dir(package) == normalized
-    assert SkillIntegrator.available_skill_names(info) == expected
-
-    # Existing is not the test -- holding a skill is. A root ``skills/`` with
-    # nothing selectable in it must not shadow the normalized container.
-    root_bundle = package / "skills"
-    (root_bundle / "docs").mkdir(parents=True)
-    (root_bundle / "README.md").write_text("# not a skill\n", encoding="utf-8")
-
-    assert SkillIntegrator._skill_source_dir(package) == normalized
+    assert normalized.is_dir()
     assert SkillIntegrator.available_skill_names(info) == expected
 
 

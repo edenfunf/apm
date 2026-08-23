@@ -647,34 +647,22 @@ class SkillIntegrator(BaseIntegrator):
         enumeration both resolve through here, so the set a user may select
         can never drift from the set that actually deploys (issue #2530).
 
-        For a ``MARKETPLACE_PLUGIN`` the normalized ``.apm/skills/`` is the
-        resolved ``plugin.json`` declaration, so it decides *which* skills
-        exist. The raw root ``skills/`` is pre-resolution input; letting it
-        decide deploys components the manifest never declared and drops
-        declared ones living outside the conventional container (#2537).
-        An empty resolution is a real answer -- ``"skills": []`` means no
-        skills, and a path rejected for escaping the plugin root must fail
-        closed rather than fall back to whatever the raw tree holds.
-
-        Each declared skill is still *sourced* from the root bundle when that
-        copy exists. It is byte-identical, but sits one level higher, so
-        relative links that leave the skill bundle keep resolving against the
-        package root instead of against ``.apm/``.
+        For a ``MARKETPLACE_PLUGIN`` parser-owned normalized membership is
+        authoritative. The parser records each normalized name's validated
+        byte source, so this integrator never re-derives membership from the
+        raw root ``skills/`` tree. An empty resolution is a real answer:
+        ``"skills": []`` means no skills, and a missing or malformed receipt
+        fails closed rather than falling back to staged package content.
 
         Callers must handle a root ``SKILL.md`` before asking: a native
         single-skill package deploys the bundle itself, not children.
         """
         from apm_cli.models.validation import PackageType
 
-        normalized = package_path / ".apm" / "skills"
         if package_type is PackageType.MARKETPLACE_PLUGIN:
-            root_bundle = package_path / "skills"
-            resolved: dict[str, Path] = {}
-            for name in SkillIntegrator._skill_names_in_directory(normalized):
-                preferred = root_bundle / name
-                resolved[name] = (
-                    preferred if (preferred / "SKILL.md").is_file() else normalized / name
-                )
+            from apm_cli.deps.plugin_parser import normalized_plugin_skill_sources
+
+            resolved, _ = normalized_plugin_skill_sources(package_path)
             return resolved
 
         source = SkillIntegrator._skill_source_dir(package_path)
@@ -746,13 +734,19 @@ class SkillIntegrator(BaseIntegrator):
         output to tell "no skills by design" apart from "my declaration ate
         them". Say which names went unclaimed, once, at that exact shape.
         """
+        from apm_cli.deps.plugin_parser import normalized_plugin_skill_sources
+
+        _, declared = normalized_plugin_skill_sources(package_path)
+        if not declared:
+            return
         shadowed = SkillIntegrator._skill_names_in_directory(package_path / "skills")
         if not shadowed:
             return
         names = ", ".join(sorted(shadowed))
         message = (
             f"Package '{parent_name}': plugin.json declares no deployable skills, "
-            f"so nothing under skills/ deploys ({names})."
+            f"so nothing under skills/ deploys ({names}). Declare the skill directories "
+            "or their container in plugin.json, or remove the skills key to discover skills/."
         )
         detail = (
             "A 'skills' declaration replaces default discovery instead of adding "
@@ -791,10 +785,10 @@ class SkillIntegrator(BaseIntegrator):
         link_rewriter: "SkillIntegrator | None" = None,
         source_paths: dict[str, Path] | None = None,
     ) -> tuple[int, list[Path]]:
-        """Promote sub-skills from .apm/skills/ to top-level skill entries.
+        """Promote named skill directories to top-level skill entries.
 
         Args:
-            sub_skills_dir: Path to the .apm/skills/ directory in the source package.
+            sub_skills_dir: Default source directory when ``source_paths`` is absent.
             target_skills_root: Root skills directory (e.g. .github/skills/ or .claude/skills/).
             parent_name: Name of the parent skill (used in warning messages).
             warn: Whether to emit a warning on name collisions.
@@ -1610,14 +1604,27 @@ class SkillIntegrator(BaseIntegrator):
                 diagnostics=diagnostics,
                 logger=logger,
             )
-        if _source_paths and (
-            _is_plugin or self._skill_source_dir(package_path) == root_skills_dir
-        ):
+            return self._merge_bin_paths(
+                SkillIntegrationResult(
+                    skill_created=False,
+                    skill_updated=False,
+                    skill_skipped=True,
+                    skill_path=None,
+                    references_copied=0,
+                    links_resolved=0,
+                ),
+                bin_paths,
+                bin_skip_reason,
+            )
+        source_dir_is_root = bool(_source_paths) and all(
+            source.parent == root_skills_dir for source in _source_paths.values()
+        )
+        if _source_paths and (_is_plugin or source_dir_is_root):
             return self._merge_bin_paths(
                 self._integrate_skill_bundle(
                     package_info,
                     project_root,
-                    root_skills_dir,
+                    package_path / ".apm" / "skills" if _is_plugin else root_skills_dir,
                     source_paths=_source_paths,
                     diagnostics=diagnostics,
                     managed_files=managed_files,
