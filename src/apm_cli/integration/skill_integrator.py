@@ -9,12 +9,16 @@ import stat
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from apm_cli.core.deployment_state import MaterializationResult
 from apm_cli.integration.base_integrator import BaseIntegrator
 from apm_cli.integration.targets import TargetProfile
 from apm_cli.models.dependency.subsets import skill_subset_filter_tokens
 from apm_cli.utils.atomic_io import write_text_lf
+
+if TYPE_CHECKING:
+    from apm_cli.models.apm_package import PackageInfo
 
 
 def _build_copy_ignore(
@@ -604,34 +608,44 @@ class SkillIntegrator(BaseIntegrator):
     @staticmethod
     def _skill_names_in_directory(skills_dir: Path) -> frozenset[str]:
         """Return deployable skill names from a directory that may be absent."""
-        if not skills_dir.is_dir():
+        if skills_dir.is_symlink() or not skills_dir.is_dir():
             return frozenset()
         try:
             return frozenset(
                 child.name
                 for child in skills_dir.iterdir()
-                if child.is_dir() and (child / "SKILL.md").is_file()
+                if not child.is_symlink()
+                and child.is_dir()
+                and not (child / "SKILL.md").is_symlink()
+                and (child / "SKILL.md").is_file()
             )
         except FileNotFoundError:
             return frozenset()
 
     @staticmethod
-    def skill_source_dir(package_path: Path) -> Path:
+    def skill_source_dir(package_info: "PackageInfo") -> Path:
         """Return the directory a package's deployable skills are promoted from.
 
         Single source of truth for skill routing: deployment and ``--skill``
         enumeration both resolve through here so the set a user may select can
-        never drift from the set that actually deploys (issue #2530). A root
-        ``skills/`` bundle wins whenever it holds at least one skill; otherwise
-        the normalized ``.apm/skills/`` location supplies them.
+        never drift from the set that actually deploys (issue #2530). Plugin
+        manifests own their declared component set, so normalized plugin skills
+        always route through ``.apm/skills/``. Other package types prefer a root
+        ``skills/`` bundle when it holds at least one deployable skill.
 
         Callers must handle a root ``SKILL.md`` before asking: a native
         single-skill package deploys the bundle itself, not children.
         """
+        from apm_cli.models.apm_package import PackageType
+
+        package_path = package_info.install_path
+        normalized = package_path / ".apm" / "skills"
+        if package_info.package_type == PackageType.MARKETPLACE_PLUGIN:
+            return normalized
         root_bundle = package_path / "skills"
         if SkillIntegrator._skill_names_in_directory(root_bundle):
             return root_bundle
-        return package_path / ".apm" / "skills"
+        return normalized
 
     @staticmethod
     def available_skill_names(package_info) -> frozenset[str] | None:
@@ -641,7 +655,7 @@ class SkillIntegrator(BaseIntegrator):
             return None
 
         return SkillIntegrator._skill_names_in_directory(
-            SkillIntegrator.skill_source_dir(package_path)
+            SkillIntegrator.skill_source_dir(package_info)
         )
 
     @staticmethod
@@ -730,9 +744,10 @@ class SkillIntegrator(BaseIntegrator):
             rel_prefix = target_skills_root.name
 
         for sub_skill_path in sub_skills_dir.iterdir():
-            if not sub_skill_path.is_dir():
+            if sub_skill_path.is_symlink() or not sub_skill_path.is_dir():
                 continue
-            if not (sub_skill_path / "SKILL.md").exists():
+            skill_manifest = sub_skill_path / "SKILL.md"
+            if skill_manifest.is_symlink() or not skill_manifest.is_file():
                 continue
             raw_sub_name = sub_skill_path.name
             # --skill filter: skip skills not in the requested subset
@@ -1481,7 +1496,7 @@ class SkillIntegrator(BaseIntegrator):
         # ``available_skill_names`` -- so a ``--skill`` value can never be
         # validated against a directory other than the one that deploys.
         root_skills_dir = package_path / "skills"
-        if self.skill_source_dir(package_path) == root_skills_dir:
+        if self.skill_source_dir(package_info) == root_skills_dir:
             return self._merge_bin_paths(
                 self._integrate_skill_bundle(
                     package_info,

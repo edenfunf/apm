@@ -172,7 +172,7 @@ def test_skill_enumeration_matches_the_directory_that_deploys(
     bundle, so a selectable name and a deployable name could disagree.
     """
     from apm_cli.integration.skill_integrator import SkillIntegrator
-    from apm_cli.models.validation import PackageType
+    from apm_cli.models.apm_package import PackageType
 
     package = tmp_path / "pkg"
     for name in ("alpha", "beta"):
@@ -182,7 +182,12 @@ def test_skill_enumeration_matches_the_directory_that_deploys(
 
     info = MagicMock(install_path=package, package_type=PackageType.MARKETPLACE_PLUGIN)
 
-    assert SkillIntegrator.skill_source_dir(package) == package / "skills"
+    assert SkillIntegrator.skill_source_dir(info) == package / ".apm" / "skills"
+    assert SkillIntegrator.available_skill_names(info) == frozenset()
+
+    info.package_type = PackageType.SKILL_BUNDLE
+
+    assert SkillIntegrator.skill_source_dir(info) == package / "skills"
     assert SkillIntegrator.available_skill_names(info) == frozenset({"alpha", "beta"})
 
 
@@ -197,7 +202,7 @@ def test_skill_enumeration_falls_back_to_the_normalized_container(
     writes, or ``--skill`` is back to enumerating nothing (#2530).
     """
     from apm_cli.integration.skill_integrator import SkillIntegrator
-    from apm_cli.models.validation import PackageType
+    from apm_cli.models.apm_package import PackageType
 
     package = tmp_path / "pkg"
     normalized = package / ".apm" / "skills"
@@ -209,7 +214,7 @@ def test_skill_enumeration_falls_back_to_the_normalized_container(
     info = MagicMock(install_path=package, package_type=PackageType.MARKETPLACE_PLUGIN)
     expected = frozenset({"csharp-scripts", "dotnet-pinvoke"})
 
-    assert SkillIntegrator.skill_source_dir(package) == normalized
+    assert SkillIntegrator.skill_source_dir(info) == normalized
     assert SkillIntegrator.available_skill_names(info) == expected
 
     # Existing is not the test -- holding a skill is. A root ``skills/`` with
@@ -218,8 +223,148 @@ def test_skill_enumeration_falls_back_to_the_normalized_container(
     (root_bundle / "docs").mkdir(parents=True)
     (root_bundle / "README.md").write_text("# not a skill\n", encoding="utf-8")
 
-    assert SkillIntegrator.skill_source_dir(package) == normalized
+    assert SkillIntegrator.skill_source_dir(info) == normalized
     assert SkillIntegrator.available_skill_names(info) == expected
+
+
+def test_plugin_manifest_skill_set_beats_undeclared_root_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plugin deployment and selection must honor only manifest-declared skills."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {
+            "name": "manifest-owned-skills",
+            "version": "1.0.0",
+            "skills": ["./skills/declared"],
+        },
+    )
+    for name in ("declared", "undeclared"):
+        skill = plugin / "skills" / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    rejected = CliRunner().invoke(cli, ["install", "--skill", "undeclared"])
+
+    assert rejected.exit_code != 0, rejected.output
+    assert "matched no declared skills" in rejected.output
+    assert not (consumer / ".claude" / "skills" / "undeclared").exists()
+
+    accepted = CliRunner().invoke(cli, ["install", "--skill", "declared"])
+
+    assert accepted.exit_code == 0, accepted.output
+    assert (consumer / ".claude" / "skills" / "declared" / "SKILL.md").is_file()
+    assert not (consumer / ".claude" / "skills" / "undeclared").exists()
+
+    full_install = CliRunner().invoke(cli, ["install"])
+
+    assert full_install.exit_code == 0, full_install.output
+    assert not (consumer / ".claude" / "skills" / "undeclared").exists()
+
+
+def test_declared_string_skill_installs_from_normalized_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The string manifest form must cross normalization and deployment."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {
+            "name": "single-declared-skill",
+            "version": "1.0.0",
+            "skills": "./custom/tdd",
+        },
+    )
+    skill = plugin / "custom" / "tdd"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# tdd\n", encoding="utf-8")
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install", "--skill", "tdd"])
+
+    assert result.exit_code == 0, result.output
+    assert (consumer / ".claude" / "skills" / "tdd" / "SKILL.md").is_file()
+
+
+def test_malformed_declared_skills_warns_during_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead plugin declaration must identify itself at the CLI boundary."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {
+            "name": "buried-skills",
+            "version": "1.0.0",
+            "skills": "./skills",
+        },
+    )
+    buried = plugin / "skills" / "engineering" / "tdd"
+    buried.mkdir(parents=True)
+    (buried / "SKILL.md").write_text("# tdd\n", encoding="utf-8")
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install"])
+
+    assert result.exit_code == 0, result.output
+    assert "Plugin 'buried-skills' skills entry 'skills'" in result.output
+    assert "no SKILL.md" in result.output
+    assert "--skill" in result.output
+
+
+def test_symlinked_skill_source_is_not_deployable(tmp_path: Path) -> None:
+    """A top-level skill symlink must never become a copytree source root."""
+    from apm_cli.integration.skill_integrator import SkillIntegrator
+
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "SKILL.md").write_text("# external\n", encoding="utf-8")
+    (external / "secret.txt").write_text("secret\n", encoding="utf-8")
+    source = tmp_path / "skills"
+    source.mkdir()
+    linked = source / "linked"
+    try:
+        linked.symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlinks are unavailable")
+
+    target = tmp_path / "deployed"
+    target.mkdir()
+    count, deployed = SkillIntegrator._promote_sub_skills(source, target, "plugin")
+
+    assert count == 0
+    assert deployed == []
+    assert not (target / "linked").exists()
+
+
+def test_skill_source_routing_has_one_static_owner() -> None:
+    """The boundary lint must defend both skill-source consumer edges."""
+    root = Path(__file__).parents[2]
+    guard = (root / "scripts/lint-architecture-boundaries.sh").read_text(encoding="utf-8")
+    architecture_doc = (root / ".apm/instructions/architecture.instructions.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "AC33: skill source routing authority" in guard
+    assert "Skill source selection must route through SkillIntegrator.skill_source_dir" in guard
+    assert "Selectable and deployable skill source" in architecture_doc
 
 
 def test_stale_persisted_skill_pin_warns_instead_of_silent_noop(

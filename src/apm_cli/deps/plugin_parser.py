@@ -91,6 +91,12 @@ def _assert_no_symlink_descendants(target: Path) -> None:
                 )
 
 
+def _assert_safe_plugin_destination(apm_dir: Path) -> None:
+    """Require the normalization root to be a real directory, not a symlink."""
+    if apm_dir.is_symlink():
+        raise PluginIntegrityError(f"Refusing to normalize through symlinked directory: {apm_dir}")
+
+
 def _surface_warning(message: str, logger: logging.Logger) -> None:
     """Emit a warning to both the stdlib logger and the rich console.
 
@@ -144,17 +150,26 @@ def _holds_skill_dirs(candidate: Path) -> bool:
     are not containers, so a declared entry keeps its own name rather than
     spilling unrecognized contents into the shared skills root.
     """
-    if (candidate / "SKILL.md").is_file():
+    skill_manifest = candidate / "SKILL.md"
+    if not skill_manifest.is_symlink() and skill_manifest.is_file():
         return False
     try:
         return any(
-            (child / "SKILL.md").is_file() for child in candidate.iterdir() if child.is_dir()
+            not child.is_symlink()
+            and child.is_dir()
+            and not (child / "SKILL.md").is_symlink()
+            and (child / "SKILL.md").is_file()
+            for child in candidate.iterdir()
         )
     except OSError:
         return False
 
 
-def _warn_skills_entry_holds_no_skill(entry: Path, plugin_path: Path) -> None:
+def _warn_skills_entry_holds_no_skill(
+    entry: Path,
+    plugin_path: Path,
+    plugin_name: str,
+) -> None:
     """Warn that a declared ``skills`` entry can never yield a skill.
 
     An entry with no ``SKILL.md`` at its root and none in any immediate child
@@ -169,7 +184,7 @@ def _warn_skills_entry_holds_no_skill(entry: Path, plugin_path: Path) -> None:
     except ValueError:  # pragma: no cover - entries are verified inside the plugin
         declared = entry.name
     _surface_warning(
-        f"Plugin skills entry '{declared}' has no SKILL.md at its root or in "
+        f"Plugin '{plugin_name}' skills entry '{declared}' has no SKILL.md at its root or in "
         f"any immediate subdirectory; nothing under it will deploy or be "
         f"selectable with --skill. Declare each skill directory, or place "
         f"skills one level below the declared container.",
@@ -304,6 +319,7 @@ def synthesize_apm_yml_from_plugin(plugin_path: Path, manifest: dict[str, Any]) 
 
     # Create .apm directory structure
     apm_dir = plugin_path / ".apm"
+    _assert_safe_plugin_destination(apm_dir)
     apm_dir.mkdir(exist_ok=True)
 
     # Map plugin structure into .apm/ subdirectories
@@ -741,6 +757,8 @@ def _map_plugin_artifacts(
     if manifest is None:
         manifest = {}
 
+    _assert_safe_plugin_destination(apm_dir)
+
     from apm_cli.security.gate import ignore_non_content
 
     # Resolve source paths  -- use manifest arrays if present, else defaults.
@@ -842,14 +860,43 @@ def _map_plugin_artifacts(
         declared = isinstance(manifest.get("skills"), (list, str))
         if skill_dirs:
             target_skills.mkdir(parents=True, exist_ok=True)
+            claimed_names: dict[str, Path] = {}
             for d in skill_dirs:
                 if declared and not _holds_skill_dirs(d):
+                    declared_manifest = d / "SKILL.md"
+                    deployable_names = (
+                        (d.name,)
+                        if not declared_manifest.is_symlink() and declared_manifest.is_file()
+                        else ()
+                    )
+                else:
+                    deployable_names = tuple(
+                        child.name
+                        for child in d.iterdir()
+                        if not child.is_symlink()
+                        and child.is_dir()
+                        and not (child / "SKILL.md").is_symlink()
+                        and (child / "SKILL.md").is_file()
+                    )
+                for name in deployable_names:
+                    previous = claimed_names.get(name)
+                    if previous is not None and previous != d:
+                        raise PluginIntegrityError(
+                            f"Plugin skill declarations collide on normalized name '{name}'"
+                        )
+                    claimed_names[name] = d
+                if declared and not _holds_skill_dirs(d):
                     dest = target_skills / d.name
-                    if not (d / "SKILL.md").is_file():
+                    skill_manifest = d / "SKILL.md"
+                    if skill_manifest.is_symlink() or not skill_manifest.is_file():
                         # Neither shape: keep the contents isolated under the
                         # entry's own name, but do not let the dead end pass
                         # silently -- that silence is the #2530 symptom.
-                        _warn_skills_entry_holds_no_skill(d, plugin_path)
+                        _warn_skills_entry_holds_no_skill(
+                            d,
+                            plugin_path,
+                            str(manifest.get("name") or plugin_path.name),
+                        )
                 else:
                     dest = target_skills
                 if _is_same_path(d, dest):

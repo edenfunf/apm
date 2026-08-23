@@ -223,6 +223,11 @@ root, install exits non-zero before deployment or lockfile commit. Likewise,
 Omit an optional field or use an empty list when the plugin has no component
 of that type.
 
+A declared `skills` entry can name either one skill directory or a container
+whose immediate children are skills. If the entry has no reachable `SKILL.md`
+at either depth, APM warns that nothing is selectable or deployable. Declare
+the skill directory itself, or place each skill one level below the container.
+
 **When to choose:** you already have a Claude plugin and want APM to
 consume it without restructuring.
 

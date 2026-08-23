@@ -370,9 +370,49 @@ class TestMapPluginArtifacts:
         with caplog.at_level(logging.WARNING, logger="apm_cli.deps.plugin_parser"):
             _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills/"]})
 
+        assert "Plugin 'plugin'" in caplog.text
         assert "skills" in caplog.text
         assert "no SKILL.md" in caplog.text
         assert "--skill" in caplog.text
+
+    def test_colliding_declared_skill_containers_fail_closed(self, tmp_path):
+        """Two declared containers cannot silently merge one skill name."""
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        for container_name in ("first", "second"):
+            skill = plugin_dir / container_name / "shared"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"# {container_name}", encoding="utf-8")
+
+        apm_dir = plugin_dir / ".apm"
+        apm_dir.mkdir()
+
+        with pytest.raises(PluginIntegrityError, match="collide"):
+            _map_plugin_artifacts(
+                plugin_dir,
+                apm_dir,
+                manifest={"skills": ["./first", "./second"]},
+            )
+
+    def test_symlinked_apm_directory_cannot_redirect_normalization(self, tmp_path):
+        """A plugin-controlled .apm symlink must not redirect artifact writes."""
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        skill = plugin_dir / "skills" / "safe"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# safe", encoding="utf-8")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        apm_dir = plugin_dir / ".apm"
+        try:
+            apm_dir.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks are unavailable")
+
+        with pytest.raises(PluginIntegrityError, match="symlinked directory"):
+            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills"]})
+
+        assert not (outside / "skills").exists()
 
     def test_declared_skills_container_does_not_warn(self, tmp_path, caplog):
         """The healthy shapes stay quiet -- a warning nobody can act on is noise."""

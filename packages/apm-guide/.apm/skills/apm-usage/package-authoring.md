@@ -510,6 +510,12 @@ Packaged distribution format created with `apm pack --format plugin`.
 
 When `apm.yml` declares `target: claude` or `target: copilot` (or the plural `targets:` equivalent), `apm pack` also generates an ecosystem-specific `plugin.json` automatically -- authors no longer need to maintain this file manually. The manifest is synthesised from `apm.yml` identity fields (`name`, `version`, `description`, `author`, `license`). See the apm pack reference (reference/cli/pack/#plugin-manifests) for output paths, credential stripping, and per-ecosystem differences, or run `apm pack --help`.
 
+In a hand-authored `plugin.json`, `skills` may name one skill directory or a
+container whose immediate children each contain `SKILL.md`. APM warns when a
+declared entry has no `SKILL.md` at either depth because it cannot be selected
+or deployed. Declare the skill directory itself, or move skills one level
+below the declared container.
+
 #### Shipping `bin/` executables (Claude Code only)
 
 A marketplace plugin may ship a root `bin/` directory of executable

@@ -247,28 +247,47 @@ class TestSkillIntegratorCopytreeSymlinkContainment(unittest.TestCase):
         Source-level guard: if a future refactor drops the callback,
         this test fails before any malicious package can exploit it.
         """
+        import ast
         import inspect
 
         from apm_cli.integration import skill_integrator
 
         source = inspect.getsource(skill_integrator)
-        # All three copytree calls in skill_integrator.py must reference
-        # ignore_non_content (directly or via a composing helper).
-        copytree_count = source.count("shutil.copytree(")
-        ignore_non_content_refs = source.count("ignore_non_content")
-        self.assertGreaterEqual(
-            copytree_count,
-            3,
-            f"Expected >=3 copytree calls in skill_integrator, found {copytree_count}",
-        )
-        # Each copytree must be matched by at least one ignore_non_content
-        # reference (the helper composes one import + one usage inside a
-        # closure -- still >=copytree_count).
-        self.assertGreaterEqual(
-            ignore_non_content_refs,
-            copytree_count,
-            f"Expected >={copytree_count} ignore_non_content references "
-            f"(one per copytree); found {ignore_non_content_refs}",
+        tree = ast.parse(source)
+        allowed_callbacks = {
+            "ignore_non_content",
+            "_build_copy_ignore",
+            "_ignore_non_content_and_apm",
+        }
+        sites = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "shutil"
+            and node.func.attr == "copytree"
+        ]
+
+        def _callback_name(node: ast.Call) -> str | None:
+            for keyword in node.keywords:
+                if keyword.arg != "ignore":
+                    continue
+                value = keyword.value
+                if isinstance(value, ast.Name):
+                    return value.id
+                if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+                    return value.func.id
+            return None
+
+        self.assertGreaterEqual(len(sites), 3)
+        self.assertEqual(
+            [
+                (node.lineno, _callback_name(node))
+                for node in sites
+                if _callback_name(node) not in allowed_callbacks
+            ],
+            [],
         )
 
 
@@ -333,10 +352,7 @@ class TestIgnoreNonContentSourceGuard(unittest.TestCase):
             for kw in node.keywords:
                 if kw.arg != "ignore":
                     continue
-                return any(
-                    isinstance(sub, ast.Name) and sub.id == "ignore_non_content"
-                    for sub in ast.walk(kw.value)
-                )
+                return isinstance(kw.value, ast.Name) and kw.value.id == "ignore_non_content"
             return False
 
         for pkg, mod_name in self._MODULES:

@@ -1552,6 +1552,71 @@ if [ "$mcp_runtime_variable_owner_defs" -ne 1 ] \
     violations=$((violations + 1))
 fi
 
+echo "[*] AC33: skill source routing authority"
+skill_source_owner="src/apm_cli/integration/skill_integrator.py"
+skill_source_check=$(python3 - "$skill_source_owner" <<'PY'
+import ast
+import sys
+from pathlib import Path
+
+tree = ast.parse(Path(sys.argv[1]).read_text(encoding="utf-8"))
+methods = {
+    node.name: node
+    for node in ast.walk(tree)
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    and node.name in {"skill_source_dir", "available_skill_names", "integrate_package_skill"}
+}
+errors = []
+if set(methods) != {"skill_source_dir", "available_skill_names", "integrate_package_skill"}:
+    errors.append("required methods are missing")
+
+
+def calls_owner(node: ast.AST, receiver: str) -> bool:
+    return any(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "skill_source_dir"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == receiver
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "package_info"
+        for call in ast.walk(node)
+    )
+
+
+if "available_skill_names" in methods and not calls_owner(
+    methods["available_skill_names"], "SkillIntegrator"
+):
+    errors.append("available_skill_names must call SkillIntegrator.skill_source_dir(package_info)")
+if "integrate_package_skill" in methods and not calls_owner(
+    methods["integrate_package_skill"], "self"
+):
+    errors.append("integrate_package_skill must call self.skill_source_dir(package_info)")
+if "skill_source_dir" in methods:
+    owner_source = ast.unparse(methods["skill_source_dir"])
+    if "PackageType.MARKETPLACE_PLUGIN" not in owner_source:
+        errors.append("skill_source_dir must preserve marketplace plugin manifest authority")
+    owner_constants = {
+        node.value
+        for node in ast.walk(methods["skill_source_dir"])
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    if not {".apm", "skills"}.issubset(owner_constants):
+        errors.append("skill_source_dir must own the normalized plugin skills path")
+
+if errors:
+    print("\n".join(errors))
+    raise SystemExit(1)
+PY
+)
+skill_source_status=$?
+if [ "$skill_source_status" -ne 0 ]; then
+    echo "[x] Skill source selection must route through SkillIntegrator.skill_source_dir"
+    echo "$skill_source_check"
+    violations=$((violations + 1))
+fi
+
 echo "[*] AC18: bootstrap project-name authority"
 if ! uv run --extra dev python scripts/lint-bootstrap-project-name.py; then
     echo "[x] Manifest bootstrap names must route through core/project_name.py"
