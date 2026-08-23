@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `apm lock export --timestamp` now rejects malformed or timezone-naive values
+  before they enter CycloneDX or SPDX metadata. (by @manideep-malyala; fixes
+  #2659) (#2660)
 - Generated bundle and plugin metadata now uses deterministic LF line endings,
   keeping generated metadata byte-stable across operating systems. Existing
   generated plugin manifests on Windows may have a one-time line-ending-only
@@ -40,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OpenAPM v0.1 (`docs/src/content/docs/specs/openapm-v0.1.md#req-tg-012`) binds
   the behavior.
   (by @MohammedAlkindi; closes #2639) (#2645)
+- `apm install` now resolves positional virtual-subdirectory git semver ranges before literal-ref preflight, while preserving registry version validation. (by @aryansk; closes #2514) (#2590)
 - `apm uninstall --global` now cleans removed-only target files before deleting their ownership state, while preserving files owned by surviving packages. (#2658)
 - Windows binary is now Authenticode-signed in the release workflow, eliminating
   the `Trojan:Script/Wacatac.H!ml` Windows Defender false positive on unsigned
