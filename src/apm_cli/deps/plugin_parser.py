@@ -944,7 +944,7 @@ def _map_plugin_artifacts(
 
     # Map skills/
     skill_sources = _resolve_sources("skills", "skills")
-    if skill_sources:
+    if skill_sources or isinstance(manifest.get("skills"), (list, str)):
         _map_plugin_skill_artifacts(plugin_path, apm_dir, manifest, skill_sources)
 
     # Map commands/ -> .apm/prompts/ (normalize .md -> .prompt.md)

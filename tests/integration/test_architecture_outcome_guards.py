@@ -303,6 +303,35 @@ def test_declared_string_skill_installs_from_normalized_source(
     assert (consumer / ".claude" / "skills" / "tdd" / "SKILL.md").is_file()
 
 
+def test_empty_declared_skills_rejects_preexisting_normalized_skills(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit empty skill set must prune package-provided normalized content."""
+    from click.testing import CliRunner
+
+    from apm_cli.cli import cli
+
+    plugin, consumer = _write_plugin_consumer(
+        tmp_path,
+        {
+            "name": "empty-declared-skills",
+            "version": "1.0.0",
+            "skills": [],
+        },
+    )
+    undeclared = plugin / ".apm" / "skills" / "undeclared"
+    undeclared.mkdir(parents=True)
+    (undeclared / "SKILL.md").write_text("# undeclared\n", encoding="utf-8")
+    monkeypatch.chdir(consumer)
+    monkeypatch.setattr("apm_cli.cli._check_and_notify_updates", lambda: None)
+
+    result = CliRunner().invoke(cli, ["install"])
+
+    assert result.exit_code == 0, result.output
+    assert not (consumer / ".claude" / "skills" / "undeclared").exists()
+
+
 def test_normalized_declared_skill_name_collision_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
