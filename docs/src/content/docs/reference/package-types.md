@@ -231,6 +231,24 @@ whose immediate children are skills. If the entry has no reachable `SKILL.md`
 at either depth, APM warns that nothing is selectable or deployable. Declare
 the skill directory itself, or place each skill one level below the container.
 
+For a container:
+
+```json
+{"skills": ["./skills/"]}
+```
+
+For one skill:
+
+```json
+{"skills": ["./skills/search"]}
+```
+
+Either form makes `search` selectable:
+
+```bash
+apm install owner/repo --skill search
+```
+
 **When to choose:** you already have a Claude plugin and want APM to
 consume it without restructuring. This is still the no-flag default output
 of `apm pack` and `apm plugin init`.

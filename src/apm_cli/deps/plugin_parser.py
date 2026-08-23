@@ -95,7 +95,10 @@ def _assert_no_symlink_descendants(target: Path) -> None:
 def _assert_safe_plugin_destination(apm_dir: Path) -> None:
     """Require the normalization root to be a real directory, not a symlink."""
     if apm_dir.is_symlink():
-        raise PluginIntegrityError(f"Refusing to normalize through symlinked directory: {apm_dir}")
+        raise PluginIntegrityError(
+            f"Refusing to normalize through symlinked directory: {apm_dir}. "
+            "Replace the package's symlinked .apm path with a real directory, then reinstall."
+        )
 
 
 def _surface_warning(message: str) -> None:
@@ -760,8 +763,8 @@ def _map_plugin_skill_artifacts(
 
     target_skills = apm_dir / "skills"
     _assert_no_symlink_descendants(target_skills)
-    skill_dirs = [source for source in skill_sources if source.is_dir()]
-    skill_files = [source for source in skill_sources if source.is_file()]
+    skill_dirs = list(dict.fromkeys(source for source in skill_sources if source.is_dir()))
+    skill_files = list(dict.fromkeys(source for source in skill_sources if source.is_file()))
     declared = isinstance(manifest.get("skills"), (list, str))
     plugin_name = str(manifest.get("name") or plugin_path.name)
     expected_target_names: set[str] = set()

@@ -368,8 +368,13 @@ class TestMapPluginArtifacts:
         apm_dir = plugin_dir / ".apm"
         apm_dir.mkdir()
         with patch("apm_cli.deps.plugin_parser._rich_warning") as warning:
-            _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills/"]})
+            _map_plugin_artifacts(
+                plugin_dir,
+                apm_dir,
+                manifest={"skills": ["./skills/", "skills"]},
+            )
 
+        assert warning.call_count == 1
         message = warning.call_args.args[0]
         assert "Plugin 'plugin'" in message
         assert "skills" in message
@@ -470,9 +475,10 @@ class TestMapPluginArtifacts:
         except OSError:
             pytest.skip("Symlinks are unavailable")
 
-        with pytest.raises(PluginIntegrityError, match="symlinked directory"):
+        with pytest.raises(PluginIntegrityError, match="symlinked directory") as exc_info:
             _map_plugin_artifacts(plugin_dir, apm_dir, manifest={"skills": ["./skills"]})
 
+        assert "real directory, then reinstall" in str(exc_info.value)
         assert not (outside / "skills").exists()
 
     def test_declared_skills_container_does_not_warn(self, tmp_path):
