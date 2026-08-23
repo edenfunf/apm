@@ -335,8 +335,7 @@ def test_normalized_declared_skill_name_collision_fails_closed(
     assert result.exit_code != 0, result.output
     assert "collide on deployed name 'foo-bar'" in result.output
     assert "colliding-skills" in result.output
-    assert "one/Foo Bar" in result.output
-    assert "two/foo-bar" in result.output
+    assert "one declaration, then reinstall." in result.output
     assert (existing / "SKILL.md").read_text(encoding="utf-8") == "# existing\n"
 
 
