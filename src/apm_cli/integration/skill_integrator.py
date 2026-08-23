@@ -6,14 +6,19 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from apm_cli.core.deployment_state import MaterializationResult
 from apm_cli.install.services import enforce_agent_plugin_deployment_boundary
 from apm_cli.integration.base_integrator import BaseIntegrator
+from apm_cli.integration.skill_support import (
+    SkillIntegrationResult,
+    build_copy_ignore,
+    clean_orphaned_skills,
+    get_lockfile_owned_agent_skills,
+)
 from apm_cli.integration.targets import TargetProfile
 from apm_cli.models.dependency.subsets import skill_subset_filter_tokens
 from apm_cli.utils.atomic_io import write_text_lf
@@ -22,58 +27,6 @@ if TYPE_CHECKING:
     # Runtime imports of PackageType stay inside the functions that need it:
     # importing the models package here would close an import cycle.
     from apm_cli.models.validation import PackageType
-
-
-def _build_copy_ignore(
-    *,
-    skip_bin: bool = False,
-) -> Callable[[str, list[str]], list[str]]:
-    """Build a ``shutil.copytree`` ignore function.
-
-    When *skip_bin* is True the returned function also excludes ``bin/``
-    directories so that unapproved executables are not deployed during
-    skill promotion.
-    """
-    from apm_cli.security.gate import ignore_non_content
-
-    if not skip_bin:
-        return ignore_non_content
-    _bin_filter = shutil.ignore_patterns("bin")
-
-    def _combined(directory: str, contents: list[str]) -> list[str]:
-        return list(
-            set(ignore_non_content(directory, contents)) | set(_bin_filter(directory, contents))
-        )
-
-    return _combined
-
-
-# DEPRECATED -- use IntegrationResult directly for new code.
-# Kept for backward compatibility. The fields map as follows:
-# skill_created -> IntegrationResult.skill_created
-# sub_skills_promoted -> IntegrationResult.sub_skills_promoted
-# skill_path, references_copied -> not mapped (skill-internal)
-@dataclass
-class SkillIntegrationResult:
-    """Result of skill integration operation."""
-
-    skill_created: bool
-    skill_updated: bool
-    skill_skipped: bool
-    skill_path: Path | None
-    references_copied: int  # Now tracks total files copied to subdirectories
-    links_resolved: int = 0  # Kept for backwards compatibility
-    sub_skills_promoted: int = 0  # Number of sub-skills promoted to top-level
-    bin_deployed: int = 0  # Number of marketplace_plugin bin/ executables deployed
-    # Why a plugin's bin/ was NOT deployed despite shipping one, so the install
-    # layer can surface an actionable hint: "project_scope" | "no_claude_target".
-    bin_skipped_reason: str | None = None
-    target_paths: list[Path] = None  # All deployed directories (for deployed_files manifest)
-    materializations: tuple[MaterializationResult, ...] = ()
-
-    def __post_init__(self):
-        if self.target_paths is None:
-            self.target_paths = []
 
 
 def to_hyphen_case(name: str) -> str:
@@ -900,7 +853,7 @@ class SkillIntegrator(BaseIntegrator):
                 sub_skill_path,
                 target,
                 dirs_exist_ok=True,
-                ignore=_build_copy_ignore(skip_bin=skip_bin),
+                ignore=build_copy_ignore(skip_bin=skip_bin),
             )
             if link_rewriter is not None:
                 link_rewriter._resolve_markdown_links_in_skill_bundle(sub_skill_path, target)
@@ -1247,7 +1200,7 @@ class SkillIntegrator(BaseIntegrator):
                 shutil.rmtree(target_skill_dir)
 
             target_skill_dir.parent.mkdir(parents=True, exist_ok=True)
-            _base_ignore = _build_copy_ignore(skip_bin=skip_bin)
+            _base_ignore = build_copy_ignore(skip_bin=skip_bin)
 
             _apm_filter = shutil.ignore_patterns(".apm")
 
@@ -2118,70 +2071,15 @@ class SkillIntegrator(BaseIntegrator):
         *,
         project_root: Path | None = None,
     ) -> dict[str, int]:
-        """Clean orphaned skills from a skills directory.
-
-        Uses npm-style approach: any skill directory not matching an installed
-        package name is considered orphaned and removed.
-
-        For the cross-client ``.agents/skills/`` directory, only removes skill
-        directories that appear in the lockfile's ``deployed_files`` to avoid
-        deleting foreign skills placed by other tools (Codex CLI, manual).
-
-        Args:
-            skills_dir: Path to skills directory (.github/skills/, .claude/skills/, etc.)
-            installed_skill_names: Set of expected skill directory names
-            project_root: Project root for lockfile-based ownership check.
-
-        Returns:
-            Dict with cleanup statistics
-        """
-        files_removed = 0
-        errors = 0
-
-        # For .agents/skills/: only delete skills that APM owns (appear in lockfile).
-        is_agents_dir = skills_dir.parent.name == ".agents"
-        lockfile_owned_skills: set[str] | None = None
-        if is_agents_dir and project_root is not None:
-            lockfile_owned_skills = self._get_lockfile_owned_agent_skills(project_root)
-
-        for skill_subdir in skills_dir.iterdir():
-            if skill_subdir.is_dir():
-                if skill_subdir.name not in installed_skill_names:
-                    # Ownership check: skip foreign skills in .agents/skills/.
-                    if lockfile_owned_skills is not None:
-                        if skill_subdir.name not in lockfile_owned_skills:
-                            continue
-                    try:
-                        shutil.rmtree(skill_subdir)
-                        files_removed += 1
-                    except Exception:
-                        errors += 1
-
-        return {"files_removed": files_removed, "errors": errors}
+        """Clean legacy-orphan skill directories without touching foreign agents."""
+        return clean_orphaned_skills(
+            skills_dir,
+            installed_skill_names,
+            project_root=project_root,
+            get_lockfile_owned_agent_skills=self._get_lockfile_owned_agent_skills,
+        )
 
     @staticmethod
     def _get_lockfile_owned_agent_skills(project_root: Path) -> set[str]:
-        """Return the set of skill names under ``.agents/skills/`` in the lockfile.
-
-        Used by ``_clean_orphaned_skills`` to avoid deleting foreign skills
-        in the cross-client ``.agents/`` directory.
-        """
-        owned: set[str] = set()
-        try:
-            from apm_cli.deps.lockfile import LockFile, get_lockfile_path
-
-            lockfile = LockFile.read(get_lockfile_path(project_root))
-            if lockfile and lockfile.dependencies:
-                for dep in lockfile.dependencies.values():
-                    for f in dep.deployed_files:
-                        if f.startswith(".agents/skills/"):
-                            parts = f[len(".agents/skills/") :].split("/")
-                            if parts and parts[0]:
-                                owned.add(parts[0])
-        except (FileNotFoundError, OSError, KeyError, ValueError, TypeError, AttributeError) as exc:
-            import logging
-
-            logging.getLogger(__name__).debug(
-                "Could not read lockfile for ownership check: %s", exc
-            )
-        return owned
+        """Return the lockfile-owned ``.agents/skills`` names."""
+        return get_lockfile_owned_agent_skills(project_root)
