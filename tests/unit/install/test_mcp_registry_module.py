@@ -152,6 +152,25 @@ class TestResolveRegistryUrlConfigLayer:
         assert urlparse(urls[0]).hostname == "config.example.com"
         assert "apm config" in msg
 
+    def test_announce_false_suppresses_only_the_endpoint_line(self, monkeypatch):
+        """A real ``--mcp`` install lets the integrator name the endpoint.
+
+        Both layers announcing printed the same line twice; the local-host
+        warning still fires here because no later phase repeats it.
+        """
+        monkeypatch.delenv("MCP_REGISTRY_URL", raising=False)
+        monkeypatch.setattr(
+            "apm_cli.config.get_mcp_registry_url",
+            lambda: "http://127.0.0.1:8080",
+        )
+        logger = MagicMock()
+
+        url, source = resolve_registry_url(None, logger=logger, announce=False)
+
+        assert (url, source) == ("http://127.0.0.1:8080", "config")
+        assert not logger.progress.called
+        assert logger.warning.called
+
     def test_default_when_config_unset(self, monkeypatch):
         """Default source when all layers are absent."""
         monkeypatch.delenv("MCP_REGISTRY_URL", raising=False)

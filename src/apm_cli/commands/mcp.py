@@ -17,21 +17,30 @@ MCP_REGISTRY_ENV = "MCP_REGISTRY_URL"
 def _build_registry_with_diag(console, logger):
     """Construct ``RegistryIntegration`` honouring the registry URL precedence chain.
 
-    Resolution order (shared with every other registry consumer, see
-    :func:`~apm_cli.registry.client.resolve_mcp_registry_url`):
-    MCP_REGISTRY_URL env > apm config mcp-registry-url > default.
+    Resolution order (MCP_REGISTRY_URL env > apm config mcp-registry-url >
+    default) is owned by
+    :func:`~apm_cli.registry.client.resolve_mcp_registry_url`, which the client
+    applies for itself. The URL is therefore NOT pre-resolved here and passed
+    in: a caller-supplied URL is by definition the ``"explicit"`` layer, so
+    doing that would relabel every ambient source and leave
+    ``registry_url_source`` unable to tell an env override from a persisted
+    config entry.
+
     Emits a one-line diagnostic naming the resolved registry URL whenever
     a non-default source is in effect, so enterprise users can confirm they
     are hitting the override and not the public default. Stays silent for the
     default public registry (defaults are quiet, overrides are visible).
     """
-    from ..registry.client import REGISTRY_SOURCE_LABELS, resolve_mcp_registry_url
+    from ..registry.client import REGISTRY_SOURCE_LABELS
     from ..registry.integration import RegistryIntegration
 
-    resolved_url, source = resolve_mcp_registry_url()
-    registry = RegistryIntegration(resolved_url)
-    if source != "default":
-        line = f"Registry: {registry.client.registry_url} ({REGISTRY_SOURCE_LABELS[source]})"
+    registry = RegistryIntegration()
+    # The label table holds exactly the ambient layers worth announcing, so a
+    # missing entry (the public default) is the "stay quiet" case -- no second
+    # condition needed, and nothing can raise on an unexpected source.
+    label = REGISTRY_SOURCE_LABELS.get(registry.client.registry_url_source)
+    if label:
+        line = f"Registry: {registry.client.registry_url} ({label})"
         if console:
             console.print(f"[muted]{line}[/muted]")
         else:

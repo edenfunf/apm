@@ -770,9 +770,13 @@ def _handle_mcp_install(  # noqa: PLR0913
     """Resolve and execute the direct ``--mcp`` install path."""
     from ..core.scope import get_apm_dir, get_deploy_root, get_manifest_path, is_user_scope
 
+    # Apply CLI > env > apm config > default precedence. The endpoint line is
+    # emitted here only for dry runs; a real install reaches the integrator,
+    # which announces the endpoint it actually queries.
     resolved_registry_url, registry_source = _resolve_registry_url(
         validated_registry_url,
         logger=logger,
+        announce=logger.dry_run,
     )
     integration_registry_url = resolved_registry_url
     mcp_manifest_path = get_manifest_path(scope)

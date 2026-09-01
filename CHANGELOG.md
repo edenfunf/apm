@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precedence chain (`--registry` / `apm.yml` `registry:` > `MCP_REGISTRY_URL` >
   `apm config` > public default), a non-default endpoint is named once before
   the lookup, and a missing server reports the registry it was looked up in.
-  (closes #2740)
+  (closes #2740) (#2745)
 - `apm pack --check-clean` is now read-only and detects marketplace drift
   without overwriting artifacts. Release pipelines that also produce artifacts
   must run `apm pack` separately; see

@@ -252,7 +252,12 @@ _MCP_COMMAND = "src/apm_cli/commands/mcp.py"
 _MARKETPLACE_RESOLVER = "src/apm_cli/marketplace/resolver.py"
 
 
-_BARE_REGISTRY_INTEGRATION = re.compile(r"RegistryIntegration\(\)")
+# ``RegistryIntegration(<anything>)``. SimpleRegistryClient owns the registry
+# URL precedence chain and records which layer supplied the URL; a
+# caller-supplied URL is by definition the "explicit" layer, so pre-resolving
+# in the command silently relabels env / apm config / default and breaks the
+# source-aware diagnostics built on it.
+_PRERESOLVED_REGISTRY_INTEGRATION = re.compile(r"RegistryIntegration\(\s*[^)\s]")
 
 
 _PLUGIN_REGISTRY_ANCHOR = "if plugin.registry:"
@@ -271,10 +276,10 @@ def check_registry_dependency_intent(provider: FactsProvider) -> tuple[Violation
         provider,
         rule_id=rule_id,
         paths=(_MCP_COMMAND,),
-        pattern=_BARE_REGISTRY_INTEGRATION,
+        pattern=_PRERESOLVED_REGISTRY_INTEGRATION,
         message=(
-            "MCP commands must pass the resolved URL into RegistryIntegration, "
-            "not construct it bare"
+            "MCP commands must let SimpleRegistryClient resolve the registry URL; "
+            "passing one into RegistryIntegration records the 'explicit' layer"
         ),
         respect_exempt=True,
     )
