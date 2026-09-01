@@ -12,6 +12,7 @@ import click
 from click.testing import CliRunner
 
 from apm_cli.commands.mcp import mcp
+from apm_cli.registry.client import _DEFAULT_REGISTRY_URL
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -720,43 +721,51 @@ class TestMcpInstallAlias:
 
 
 class TestMcpRegistryEnvVar:
-    """All apm mcp commands must pass `RegistryIntegration()` with no positional URL,
-    so the ``MCP_REGISTRY_URL`` fallback in ``SimpleRegistryClient`` actually fires.
-    Regression for issue #813.
+    """Every apm mcp command must reach the registry the precedence chain names.
+
+    Originally issue #813 (the ``MCP_REGISTRY_URL`` env fallback was bypassed by
+    a hardcoded URL); the same invariant now covers the persisted
+    ``apm config set mcp-registry-url`` layer, which ``apm install`` used to
+    ignore (#2740).
     """
 
-    def _assert_no_positional_url(self, mock_cls):
-        """Assert RegistryIntegration was constructed without a positional URL arg."""
+    def _assert_resolved_url(self, mock_cls, expected):
+        """Assert every RegistryIntegration construction got *expected* as its URL."""
         assert mock_cls.called, "RegistryIntegration was not constructed"
         for call in mock_cls.call_args_list:
             args, kwargs = call
-            assert not args, (
-                f"RegistryIntegration() called with positional url={args!r}; "
-                "must be no-arg so MCP_REGISTRY_URL env var fallback fires"
-            )
-            url = kwargs.get("registry_url")
-            assert url is None, (
-                f"RegistryIntegration(registry_url={url!r}) hardcodes the URL; "
-                "must be None so MCP_REGISTRY_URL env var fallback fires"
+            url = args[0] if args else kwargs.get("registry_url")
+            assert url == expected, (
+                f"RegistryIntegration was built with url={url!r}; the resolved "
+                f"registry URL is {expected!r}, so the command would query a "
+                "different endpoint than the precedence chain names"
             )
 
-    def test_search_uses_no_arg_constructor(self):
+    def test_search_honours_env_layer(self, monkeypatch):
+        monkeypatch.setenv("MCP_REGISTRY_URL", "https://env.internal.example.com")
         runner = make_runner()
         with patch_registry(search_result=FAKE_SERVERS) as mock_cls:
             runner.invoke(mcp, ["search", "cool"])
-        self._assert_no_positional_url(mock_cls)
+        self._assert_resolved_url(mock_cls, "https://env.internal.example.com")
 
-    def test_show_uses_no_arg_constructor(self):
+    def test_show_honours_config_layer(self, monkeypatch):
+        monkeypatch.delenv("MCP_REGISTRY_URL", raising=False)
+        monkeypatch.setattr(
+            "apm_cli.config.get_mcp_registry_url",
+            lambda: "https://config.internal.example.com",
+        )
         runner = make_runner()
         with patch_registry(detail_result=FAKE_SERVER_DETAIL) as mock_cls:
             runner.invoke(mcp, ["show", "io.github.acme/cool-server"])
-        self._assert_no_positional_url(mock_cls)
+        self._assert_resolved_url(mock_cls, "https://config.internal.example.com")
 
-    def test_list_uses_no_arg_constructor(self):
+    def test_list_falls_back_to_public_default(self, monkeypatch):
+        monkeypatch.delenv("MCP_REGISTRY_URL", raising=False)
+        monkeypatch.setattr("apm_cli.config.get_mcp_registry_url", lambda: None)
         runner = make_runner()
         with patch_registry(list_result=FAKE_SERVERS) as mock_cls:
             runner.invoke(mcp, ["list"])
-        self._assert_no_positional_url(mock_cls)
+        self._assert_resolved_url(mock_cls, _DEFAULT_REGISTRY_URL)
 
     def test_search_diag_line_when_env_var_set(self, monkeypatch):
         """When MCP_REGISTRY_URL is set, search emits a one-line registry diagnostic."""

@@ -113,7 +113,7 @@ list):
 
 | Variable | Effect |
 |---|---|
-| `MCP_REGISTRY_URL` | Override the registry endpoint used by `list`, `search`, `show`, and `install`. When set, every command prints a one-line `Registry: <url>` diagnostic so the override is visible. Unset: the public default registry is used silently. |
+| `MCP_REGISTRY_URL` | Override the registry endpoint used by `list`, `search`, `show`, and `install`. When set, every command prints a one-line `Registry: <url> (from MCP_REGISTRY_URL)` diagnostic so the override is visible. Unset: the public default registry is used silently. |
 
 Network failures against an overridden registry surface an explicit
 hint pointing at `MCP_REGISTRY_URL`. Direct `apm install --mcp` lookup
@@ -122,13 +122,18 @@ also fails closed against the public default before writing user state.
 Registry URL resolution order (first set value wins):
 
 1. `--registry <url>` flag on `apm mcp install` / `apm install --mcp` (this invocation only)
-2. `MCP_REGISTRY_URL` environment variable -- prints `Registry: <url>` diagnostic
-3. `mcp-registry-url` in `~/.apm/config.json` (set via `apm config set mcp-registry-url`) -- prints `Registry (config): <url>` diagnostic
+2. `MCP_REGISTRY_URL` environment variable -- prints `Registry: <url> (from MCP_REGISTRY_URL)` diagnostic
+3. `mcp-registry-url` in `~/.apm/config.json` (set via `apm config set mcp-registry-url`) -- prints `Registry: <url> (from apm config)` diagnostic
 4. Built-in public default (silent)
 
-Configured or environment-selected `http://` endpoints require
-`MCP_REGISTRY_ALLOW_HTTP=1` when used. An explicit `--registry http://...` flag
-is the per-invocation opt-in.
+The same chain resolves the `dependencies.mcp` entries `apm install` reads from
+`apm.yml`; a per-dependency `registry:` URL overrides it for that entry only.
+Whenever a non-default endpoint is in effect, `apm install` names it once with
+`Using MCP registry: <url> (<source>)` before the lookup.
+
+Environment-selected and per-dependency `http://` endpoints require
+`MCP_REGISTRY_ALLOW_HTTP=1` when used. A persisted `mcp-registry-url` and an
+explicit `--registry http://...` flag are deliberate opt-ins.
 
 ## Examples
 

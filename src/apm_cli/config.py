@@ -793,7 +793,14 @@ def _validate_mcp_registry_url(url: str) -> str:
 
 
 def get_mcp_registry_url() -> str | None:
-    """Return the user-configured MCP registry URL, or None if not set."""
+    """Return the user-configured MCP registry URL, or None if not set.
+
+    Reads without materialising ``~/.apm/config.json``: registry resolution now
+    runs on every MCP client construction, including preview-only paths, and a
+    lookup that answers "not set" must not leave state behind to say so.
+    """
+    if _config_cache is None and not os.path.exists(CONFIG_FILE):
+        return None
     return get_config().get(_MCP_REGISTRY_URL_KEY)
 
 

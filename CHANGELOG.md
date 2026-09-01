@@ -64,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `apm pack` now reports unavailable remote package metadata, exposes
   certifiability in JSON, prevents `--check-clean` from certifying degraded
   regeneration, and lets `--strict-metadata` fail before writes. (closes #2524)
+- `apm install` now resolves `dependencies.mcp` entries against the registry
+  named by `apm config set mcp-registry-url`, so a server `apm mcp show` finds
+  is the server the install fetches. Every registry consumer shares one
+  precedence chain (`--registry` / `apm.yml` `registry:` > `MCP_REGISTRY_URL` >
+  `apm config` > public default), a non-default endpoint is named once before
+  the lookup, and a missing server reports the registry it was looked up in.
+  (closes #2740)
 - `apm pack --check-clean` is now read-only and detects marketplace drift
   without overwriting artifacts. Release pipelines that also produce artifacts
   must run `apm pack` separately; see
