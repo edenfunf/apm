@@ -62,8 +62,9 @@ Exit codes:
   1  Build or runtime error
   2  Manifest schema validation error
   3  Version alignment check failed (--check-versions)
-  4  Pack-output drift detected (--check-clean): the marketplace working tree
-     or a committed plugin.json disagrees with apm.yml
+  4  Pack-output drift detected (--check-clean): the marketplace working tree,
+     or a generated plugin.json (.claude-plugin/, .github/plugin/), disagrees
+     with apm.yml
 """
 
 
@@ -251,9 +252,9 @@ def _parse_marketplace_filter(
     help=(
         "Release gate: regenerate every configured marketplace output to a "
         "temp representation and diff against the effective on-disk path, "
-        "including --marketplace-path overrides, and check every committed "
-        "plugin.json against apm.yml. This mode is read-only and exits 4 for "
-        "drift."
+        "including --marketplace-path overrides, and check the ecosystem "
+        "plugin.json manifests apm pack generates against apm.yml. This mode "
+        "is read-only and exits 4 for drift."
     ),
 )
 @click.option(

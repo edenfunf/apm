@@ -40,10 +40,10 @@ Bundles are target-agnostic. The consumer's project decides where files land at 
 | `--include-prerelease` | off | Marketplace: allow pre-release tags to satisfy version ranges. |
 | `-m`, `--marketplace FORMATS` | all configured | Comma-separated list of marketplace formats to build. Sentinels: `all` (every configured format), `none` (skip marketplace entirely). |
 | `--marketplace-path FORMAT=PATH` | manifest default | Override the output path for a specific format. Repeatable. Example: `--marketplace-path codex=./dist/codex.json`. |
-| `--json` | off | Emit machine-readable JSON to stdout. All logs move to stderr. Shape: `{ok, dry_run, warnings, errors, marketplace: {outputs: [...]}}`. |
+| `--json` | off | Emit machine-readable JSON to stdout. All logs move to stderr. Shape: `{ok, dry_run, warnings, errors, marketplace: {outputs: [...]}, bundle, plugin_manifests: {written, skipped, stale, dry_run}, version_alignment, drift}`. `plugin_manifests.stale` is a subset of `skipped`, each entry `{path, fields}`. |
 | `--legacy-skill-paths` | off | Bundle skills under per-client paths (e.g. `.cursor/skills/`) instead of the converged `.agents/skills/`. Compatibility flag. |
 | `--check-versions` | off | Release gate: verify per-package versions agree with the configured `marketplace.versioning.strategy` (`lockstep`, `tag_pattern`, or `per_package`). Exits `3` on misalignment. Composes with `--check-clean` and `--dry-run`. |
-| `--check-clean` | off | Read-only release gate: regenerate every configured marketplace output to a temporary representation and diff against the same effective path used by `apm pack`, including `--marketplace-path` overrides, and check every committed `plugin.json` against `apm.yml`. It never writes pack outputs and exits `4` for drift. |
+| `--check-clean` | off | Read-only release gate: regenerate every configured marketplace output to a temporary representation and diff against the same effective path used by `apm pack`, including `--marketplace-path` overrides, and check the ecosystem `plugin.json` manifests it generates (`.claude-plugin/plugin.json`, `.github/plugin/plugin.json`) against `apm.yml`. It never writes pack outputs and exits `4` for drift. |
 | `--target`, `-t VALUE` | auto-detect | **Deprecated.** Recorded as informational `pack.target` metadata only; ignored by `apm install`. Will be removed in a future release. |
 
 :::caution[Migrating automation from `.tar.gz`?]
@@ -254,7 +254,7 @@ Plugin manifest generation runs after BUNDLE and MARKETPLACE phases so the gener
 | `1` | Build or runtime error: network failure, ref not found, no tag matches a marketplace range, lockfile read error, or unhandled packer exception. |
 | `2` | `apm.yml` schema validation error. |
 | `3` | `--check-versions` failed: per-package versions disagree with the configured marketplace versioning strategy. |
-| `4` | `--check-clean` failed: a pack output is dirty -- a regenerated marketplace output differs from the on-disk file, or a committed `plugin.json` disagrees with `apm.yml`. |
+| `4` | `--check-clean` failed: a pack output is dirty -- a regenerated marketplace output differs from the on-disk file, or a generated ecosystem `plugin.json` disagrees with `apm.yml`. |
 
 ## Related
 
