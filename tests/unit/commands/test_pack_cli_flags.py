@@ -142,6 +142,49 @@ def _write_project(tmp_path: _Path, apm_yml: str, *, pkg_version: str = "1.0.0")
     return tmp_path
 
 
+_APM_PLUGIN_TARGET = """\
+name: my-project
+description: A project.
+version: 1.0.9
+license: MIT
+targets: claude
+"""
+
+_GENERATED_PLUGIN_JSON = {
+    "name": "my-project",
+    "version": "1.0.9",
+    "description": "A project.",
+    "license": "MIT",
+}
+
+
+def _json_envelope(output: str) -> str:
+    """Slice the ``--json`` envelope out of output that also carries log lines.
+
+    ``CliRunner`` merges the logger's stderr into ``result.output``; the
+    envelope is the pretty-printed object whose braces sit at column 0.
+    """
+    lines = output.splitlines()
+    start = next(i for i, line in enumerate(lines) if line == "{")
+    return "\n".join(lines[start:])
+
+
+def _write_plugin_project(tmp_path: _Path, plugin_json: object) -> _Path:
+    """A claude-target project, optionally carrying a committed plugin.json."""
+    (tmp_path / "apm.yml").write_text(_APM_PLUGIN_TARGET, encoding="utf-8")
+    skill = tmp_path / ".apm" / "skills" / "demo"
+    skill.mkdir(parents=True, exist_ok=True)
+    skill.joinpath("SKILL.md").write_text(
+        "---\nname: demo\ndescription: A demo skill.\n---\n\nBody\n", encoding="utf-8"
+    )
+    if plugin_json is not None:
+        target = tmp_path / ".claude-plugin" / "plugin.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        body = plugin_json if isinstance(plugin_json, str) else _json.dumps(plugin_json, indent=2)
+        target.write_text(body + "\n", encoding="utf-8")
+    return tmp_path
+
+
 class TestHelpExitCodes:
     """Help text should document exit codes 3 and 4."""
 
@@ -365,3 +408,119 @@ class TestBothFlagsCombined:
         data = _json.loads(result.output)
         assert data["version_alignment"] is not None
         assert data["drift"] is not None
+
+
+class TestPluginManifestDriftGate:
+    """--check-clean covers plugin.json, which pack never rewrites on its own.
+
+    `apm pack` preserves an existing plugin.json unless --force is passed, so a
+    manifest left behind by an earlier version keeps shipping its stale
+    `version` to every consumer. Before #2553 no gate looked at the file:
+    --check-versions only compared apm.yml against the marketplace strategy and
+    --check-clean only diffed marketplace.json.
+    """
+
+    def test_stale_plugin_manifest_fails_the_gate(self, tmp_path: _Path, monkeypatch) -> None:
+        """The exact #2553 repro: apm.yml moved to 1.0.9, plugin.json still says 1.0.8."""
+        stale = dict(_GENERATED_PLUGIN_JSON, version="1.0.8")
+        _write_plugin_project(tmp_path, stale)
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, ["--check-clean"])
+
+        assert result.exit_code == 4, result.output
+        assert "Plugin manifest drift" in result.output
+        assert "drift: version" in result.output
+
+    def test_stale_plugin_manifest_is_not_rewritten_by_the_gate(
+        self, tmp_path: _Path, monkeypatch
+    ) -> None:
+        """--check-clean stays read-only: it reports the drift, never repairs it."""
+        stale = dict(_GENERATED_PLUGIN_JSON, version="1.0.8")
+        _write_plugin_project(tmp_path, stale)
+        monkeypatch.chdir(tmp_path)
+        on_disk = tmp_path / ".claude-plugin" / "plugin.json"
+        before = on_disk.read_bytes()
+
+        CliRunner().invoke(pack_cmd, ["--check-clean"])
+
+        assert on_disk.read_bytes() == before
+
+    def test_matching_plugin_manifest_passes_quietly(self, tmp_path: _Path, monkeypatch) -> None:
+        """A manifest that agrees with apm.yml is a no-op, not a warning."""
+        _write_plugin_project(tmp_path, _GENERATED_PLUGIN_JSON)
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, ["--check-clean"])
+
+        assert result.exit_code == 0, result.output
+        assert "Plugin manifest drift" not in result.output
+        assert "already matches apm.yml" in result.output
+
+    def test_hand_added_fields_are_not_drift(self, tmp_path: _Path, monkeypatch) -> None:
+        """Keys APM does not generate belong to the author and are left alone.
+
+        The never-overwrite policy exists so hand-maintained manifests survive;
+        a gate that failed on extra keys would defeat it.
+        """
+        extended = dict(_GENERATED_PLUGIN_JSON, author={"name": "Someone"}, x_custom=[1, 2])
+        _write_plugin_project(tmp_path, extended)
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, ["--check-clean"])
+
+        assert result.exit_code == 0, result.output
+        assert "Plugin manifest drift" not in result.output
+
+    def test_absent_plugin_manifest_is_not_drift(self, tmp_path: _Path, monkeypatch) -> None:
+        """Nothing committed means nothing stale ships; pack would create it."""
+        _write_plugin_project(tmp_path, None)
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, ["--check-clean"])
+
+        assert result.exit_code == 0, result.output
+        assert "Plugin manifest drift" not in result.output
+
+    def test_unreadable_plugin_manifest_fails_the_gate(self, tmp_path: _Path, monkeypatch) -> None:
+        """A manifest that is not JSON cannot be the one apm.yml describes."""
+        _write_plugin_project(tmp_path, "{ not json")
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, ["--check-clean"])
+
+        assert result.exit_code == 4, result.output
+        assert "not a JSON object" in result.output
+
+    def test_json_envelope_names_the_stale_manifest(self, tmp_path: _Path, monkeypatch) -> None:
+        """CI consumers get the drifting fields without scraping stderr."""
+        stale = dict(_GENERATED_PLUGIN_JSON, version="1.0.8", description="Old.")
+        _write_plugin_project(tmp_path, stale)
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, ["--check-clean", "--json"])
+
+        data = _json.loads(_json_envelope(result.output))
+        assert result.exit_code == 4
+        assert data["ok"] is False
+        entries = data["plugin_manifests"]["stale"]
+        assert len(entries) == 1
+        assert entries[0]["path"].endswith("plugin.json")
+        assert sorted(entries[0]["fields"]) == ["description", "version"]
+        # A stale manifest is still a preserved one: the pre-existing
+        # ``skipped`` list keeps reporting it for existing consumers.
+        assert data["plugin_manifests"]["skipped"] == [entries[0]["path"]]
+        assert any(e["code"] == "plugin_manifest_drift" for e in data["errors"])
+
+    def test_stale_manifest_alone_does_not_fail_a_plain_pack(
+        self, tmp_path: _Path, monkeypatch
+    ) -> None:
+        """Without the gate, drift is a loud warning -- pack still never clobbers."""
+        stale = dict(_GENERATED_PLUGIN_JSON, version="1.0.8")
+        _write_plugin_project(tmp_path, stale)
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(pack_cmd, [])
+
+        assert result.exit_code == 0, result.output
+        assert "disagrees with apm.yml on: version" in result.output

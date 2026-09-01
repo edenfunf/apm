@@ -43,7 +43,7 @@ Bundles are target-agnostic. The consumer's project decides where files land at 
 | `--json` | off | Emit machine-readable JSON to stdout. All logs move to stderr. Shape: `{ok, dry_run, warnings, errors, marketplace: {outputs: [...]}}`. |
 | `--legacy-skill-paths` | off | Bundle skills under per-client paths (e.g. `.cursor/skills/`) instead of the converged `.agents/skills/`. Compatibility flag. |
 | `--check-versions` | off | Release gate: verify per-package versions agree with the configured `marketplace.versioning.strategy` (`lockstep`, `tag_pattern`, or `per_package`). Exits `3` on misalignment. Composes with `--check-clean` and `--dry-run`. |
-| `--check-clean` | off | Read-only release gate: regenerate every configured marketplace output to a temporary representation and diff against the same effective path used by `apm pack`, including `--marketplace-path` overrides. It never writes pack outputs and exits `4` for drift. |
+| `--check-clean` | off | Read-only release gate: regenerate every configured marketplace output to a temporary representation and diff against the same effective path used by `apm pack`, including `--marketplace-path` overrides, and check every committed `plugin.json` against `apm.yml`. It never writes pack outputs and exits `4` for drift. |
 | `--target`, `-t VALUE` | auto-detect | **Deprecated.** Recorded as informational `pack.target` metadata only; ignored by `apm install`. Will be removed in a future release. |
 
 :::caution[Migrating automation from `.tar.gz`?]
@@ -218,7 +218,17 @@ A warning lists everything dropped or redacted, led by the consequence (secrets 
 
 #### Overwrite and dry-run
 
-If a `plugin.json` already exists at the target path it is **preserved**: `apm pack` warns and skips the write. Re-run with `--force` to overwrite it (the same flag that governs bundle collisions). The `--dry-run` flag prevents any writes -- the manifest content is computed but not persisted.
+If a `plugin.json` already exists at the target path it is **preserved**: `apm pack` never rewrites it without `--force` (the same flag that governs bundle collisions). The `--dry-run` flag prevents any writes -- the manifest content is computed but not persisted.
+
+Because the file is preserved, `apm pack` reports which of the two preservations happened:
+
+| On-disk `plugin.json` | Report | `--check-clean` |
+|---|---|---|
+| Agrees with `apm.yml` | `[i] ... already matches apm.yml; leaving it untouched.` | passes |
+| Disagrees with `apm.yml` | `[!] ... disagrees with apm.yml on: <fields>` | exits `4` |
+| Absent | written (or previewed under `--dry-run`) | passes |
+
+The comparison is one-directional: every field APM derives from `apm.yml` must be present and equal, while fields you added by hand are left alone. That is what keeps a hand-maintained manifest legal while still catching one whose `version` no longer matches the package it ships with -- consumers read `plugin.json` for the version when installing.
 
 :::note[Planned]
 The generated manifest is intentionally minimal. Enrichment fields (`homepage`, `repository`, `keywords`, `author.url`) are planned for a follow-up release ([#1621](https://github.com/microsoft/apm/issues/1621)).
@@ -244,7 +254,7 @@ Plugin manifest generation runs after BUNDLE and MARKETPLACE phases so the gener
 | `1` | Build or runtime error: network failure, ref not found, no tag matches a marketplace range, lockfile read error, or unhandled packer exception. |
 | `2` | `apm.yml` schema validation error. |
 | `3` | `--check-versions` failed: per-package versions disagree with the configured marketplace versioning strategy. |
-| `4` | `--check-clean` failed: marketplace working tree is dirty (regenerated output differs from on-disk file). |
+| `4` | `--check-clean` failed: a pack output is dirty -- a regenerated marketplace output differs from the on-disk file, or a committed `plugin.json` disagrees with `apm.yml`. |
 
 ## Related
 

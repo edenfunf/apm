@@ -74,10 +74,21 @@ PLUGIN_ECOSYSTEM_PATHS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class PluginManifestWriteResult:
-    """Describe the canonical plugin-manifest write decision."""
+    """Describe the canonical plugin-manifest write decision.
+
+    ``action`` distinguishes the two ways an existing file is preserved:
+    ``"unchanged"`` (it already says what ``apm.yml`` says) and ``"stale"``
+    (it disagrees, and shipping it would advertise the wrong metadata to
+    consumers). Both leave the file untouched; only ``"stale"`` is a release
+    problem, and :attr:`drift` names the fields that disagree.
+    """
 
     path: Path | None
-    action: Literal["written", "skipped", "dry_run"]
+    """The file APM wrote; ``None`` for every outcome that wrote nothing."""
+
+    action: Literal["written", "unchanged", "stale", "skipped", "dry_run"]
+    drift: tuple[str, ...] = ()
+    """Generated field names the preserved file fails to match (``stale`` only)."""
 
 
 # Server-object keys that may carry live credentials. Any key whose lowercased
@@ -398,6 +409,40 @@ def build_plugin_manifest(
 # Manifest writer
 # ---------------------------------------------------------------------------
 
+_NOT_A_MANIFEST_OBJECT = "<not a JSON object>"
+"""Drift marker for an existing manifest that is unreadable or not an object."""
+
+
+def plugin_manifest_drift(existing: Any, generated: dict) -> tuple[str, ...]:
+    """Return the generated top-level keys that *existing* fails to match.
+
+    The comparison is deliberately one-directional: every key APM derives from
+    ``apm.yml`` must be present and equal, while keys the author added by hand
+    are left alone. That asymmetry is the whole point of the file's
+    never-overwrite policy -- a hand-maintained ``plugin.json`` is legitimate,
+    a ``plugin.json`` that contradicts the manifest it was generated from is
+    not, because consumers read its ``version`` when installing the package.
+
+    An *existing* value that is not a JSON object cannot satisfy any generated
+    key, so it reports :data:`_NOT_A_MANIFEST_OBJECT`.
+    """
+    if not isinstance(existing, dict):
+        return (_NOT_A_MANIFEST_OBJECT,)
+    return tuple(key for key, value in generated.items() if existing.get(key) != value)
+
+
+def _read_existing_manifest(path: Path) -> Any:
+    """Return the parsed contents of *path*, or ``None`` when unreadable.
+
+    ``None`` is not a JSON object, so it flows into
+    :func:`plugin_manifest_drift` as total drift -- an unreadable manifest is
+    reported, never silently accepted.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
 
 def write_plugin_manifest_with_outcome(
     project_root: Path,
@@ -415,11 +460,18 @@ def write_plugin_manifest_with_outcome(
 
     **Overwrite policy.** If a ``plugin.json`` already exists at the target
     path it is preserved unless *force* is set (threaded from ``apm pack
-    --force``). Without ``--force`` the function emits a warning and skips the
-    write with a ``"skipped"`` result -- this mirrors the collision contract the rest
-    of ``apm pack`` already honours and prevents a compromised ``.mcp.json``
-    from silently replacing a hand-audited file. With ``--force`` the existing
-    file is overwritten and a warning records the replacement.
+    --force``). This mirrors the collision contract the rest of ``apm pack``
+    already honours and prevents a compromised ``.mcp.json`` from silently
+    replacing a hand-audited file. With ``--force`` the existing file is
+    overwritten and a warning records the replacement.
+
+    Preserving the file is reported as one of two outcomes, because they mean
+    very different things to a release pipeline: ``"unchanged"`` when the file
+    already agrees with ``apm.yml`` (informational), and ``"stale"`` when it
+    contradicts it (a warning naming the fields, and a ``--check-clean``
+    failure). Before this split every preserved file logged the same warning,
+    so a genuinely stale manifest was indistinguishable from a no-op and could
+    ship a wrong version with the pipeline green (#2553).
 
     In dry-run mode the function logs what *would* be written and returns a
     ``"dry_run"`` result without touching the filesystem.
@@ -440,14 +492,19 @@ def write_plugin_manifest_with_outcome(
     # .github/ directory pointing outside the project root).
     ensure_path_within(output_path, project_root)
 
-    if output_path.exists():
-        if not force:
-            _skip_warn = (
-                f"{output_path} already exists; skipping plugin.json generation. "
-                "Re-run with --force to overwrite it."
-            )
-            _emit("warning", _skip_warn, logger, "warning")
-            return PluginManifestWriteResult(path=None, action="skipped")
+    if output_path.exists() and not force:
+        drift = plugin_manifest_drift(_read_existing_manifest(output_path), manifest)
+        if not drift:
+            _unchanged = f"{output_path} already matches apm.yml; leaving it untouched."
+            _emit("info", _unchanged, logger, "info")
+            return PluginManifestWriteResult(path=None, action="unchanged")
+        _stale_warn = (
+            f"{output_path} disagrees with apm.yml on: {', '.join(drift)}. "
+            "It was left untouched; re-run with --force to regenerate it, or run "
+            "'apm pack --check-clean' in CI to fail the release on this."
+        )
+        _emit("warning", _stale_warn, logger, "warning")
+        return PluginManifestWriteResult(path=None, action="stale", drift=drift)
 
     if dry_run:
         if output_path.exists():

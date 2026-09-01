@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `apm pack` now distinguishes a preserved `plugin.json` that agrees with
+  `apm.yml` from one that contradicts it: the first is a quiet no-op, the
+  second names the disagreeing fields and fails `--check-clean` with exit 4.
+  A manifest left on an old version can no longer ship a wrong version string
+  with the release pipeline green. Fields added by hand are not compared, and
+  an absent manifest is not drift. (closes #2553)
 - `apm pack --check-clean` is now read-only and detects marketplace drift
   without overwriting artifacts. Release pipelines that also produce artifacts
   must run `apm pack` separately; see

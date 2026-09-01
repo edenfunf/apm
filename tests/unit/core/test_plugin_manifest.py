@@ -14,7 +14,9 @@ from apm_cli.core.plugin_manifest import (
     build_plugin_manifest,
     collect_mcp_servers,
     find_or_synthesize_plugin_json,
+    plugin_manifest_drift,
     write_plugin_manifest,
+    write_plugin_manifest_with_outcome,
 )
 
 
@@ -533,7 +535,10 @@ class TestWritePluginManifest:
         assert result is None
         assert json.loads(existing.read_text(encoding="utf-8"))["name"] == "old-content"
         assert len(warnings_emitted) == 1
-        assert "skipping plugin.json generation" in warnings_emitted[0]
+        # Same decision a real non-force run reports (#2583): the file is left
+        # alone, and the warning names the drift rather than previewing a write.
+        assert "left untouched" in warnings_emitted[0]
+        assert "--force" in warnings_emitted[0]
         assert not any("Would write plugin manifest" in msg for msg in info_emitted)
 
     def test_dry_run_existing_file_with_force_previews_overwrite(
@@ -731,3 +736,136 @@ class TestModuleConstants:
 
     def test_copilot_path(self) -> None:
         assert PLUGIN_ECOSYSTEM_PATHS["copilot"] == ".github/plugin/plugin.json"
+
+
+class TestPluginManifestDrift:
+    """`plugin_manifest_drift` decides whether a preserved file is stale.
+
+    `apm pack` never rewrites an existing plugin.json without --force, so this
+    predicate is the only thing standing between a manifest left on an old
+    version and a release that ships it (#2553).
+    """
+
+    def test_equal_manifests_have_no_drift(self) -> None:
+        generated = {"name": "p", "version": "1.0.0"}
+        assert plugin_manifest_drift(dict(generated), generated) == ()
+
+    def test_key_order_and_formatting_are_not_drift(self) -> None:
+        generated = {"name": "p", "version": "1.0.0", "description": "d"}
+        reordered = {"description": "d", "version": "1.0.0", "name": "p"}
+        assert plugin_manifest_drift(reordered, generated) == ()
+
+    def test_differing_generated_value_is_drift(self) -> None:
+        generated = {"name": "p", "version": "1.0.9"}
+        assert plugin_manifest_drift({"name": "p", "version": "1.0.8"}, generated) == ("version",)
+
+    def test_missing_generated_key_is_drift(self) -> None:
+        generated = {"name": "p", "version": "1.0.9", "license": "MIT"}
+        assert plugin_manifest_drift({"name": "p"}, generated) == ("version", "license")
+
+    def test_hand_added_keys_are_not_drift(self) -> None:
+        """The comparison is one-directional: extra keys belong to the author."""
+        generated = {"name": "p", "version": "1.0.0"}
+        existing = {"name": "p", "version": "1.0.0", "author": {"name": "Someone"}}
+        assert plugin_manifest_drift(existing, generated) == ()
+
+    def test_nested_value_mismatch_is_drift(self) -> None:
+        generated = {"name": "p", "author": {"name": "New"}}
+        assert plugin_manifest_drift({"name": "p", "author": {"name": "Old"}}, generated) == (
+            "author",
+        )
+
+    @pytest.mark.parametrize("existing", [None, [], "text", 7])
+    def test_non_object_existing_is_total_drift(self, existing: object) -> None:
+        """An unreadable or non-object manifest can never satisfy apm.yml."""
+        assert plugin_manifest_drift(existing, {"name": "p"}) == ("<not a JSON object>",)
+
+
+class TestPreservedManifestOutcomes:
+    """A preserved plugin.json reports whether it agrees with apm.yml."""
+
+    def _capture(self, monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], list[str]]:
+        warnings: list[str] = []
+        infos: list[str] = []
+        monkeypatch.setattr(
+            "apm_cli.core.plugin_manifest._rich_warning",
+            lambda msg, **kw: warnings.append(msg),
+        )
+        monkeypatch.setattr(
+            "apm_cli.core.plugin_manifest._rich_info",
+            lambda msg, **kw: infos.append(msg),
+        )
+        return warnings, infos
+
+    def test_matching_file_is_unchanged_and_quiet(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manifest = {"name": "p", "version": "1.0.0"}
+        _write(tmp_path / ".claude-plugin" / "plugin.json", json.dumps(manifest))
+        warnings, infos = self._capture(monkeypatch)
+
+        result = write_plugin_manifest_with_outcome(tmp_path, manifest, "claude")
+
+        assert result.action == "unchanged"
+        assert result.drift == ()
+        assert result.path is None
+        assert warnings == []
+        assert any("already matches apm.yml" in msg for msg in infos)
+
+    def test_disagreeing_file_is_stale_and_names_the_fields(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(
+            tmp_path / ".claude-plugin" / "plugin.json",
+            json.dumps({"name": "p", "version": "1.0.8"}),
+        )
+        warnings, _ = self._capture(monkeypatch)
+
+        result = write_plugin_manifest_with_outcome(
+            tmp_path, {"name": "p", "version": "1.0.9"}, "claude"
+        )
+
+        assert result.action == "stale"
+        assert result.drift == ("version",)
+        assert len(warnings) == 1
+        assert "disagrees with apm.yml on: version" in warnings[0]
+
+    def test_stale_file_is_left_on_disk(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reporting drift must not become a licence to clobber."""
+        existing = tmp_path / ".claude-plugin" / "plugin.json"
+        _write(existing, json.dumps({"name": "p", "version": "1.0.8"}))
+        self._capture(monkeypatch)
+
+        write_plugin_manifest_with_outcome(tmp_path, {"name": "p", "version": "1.0.9"}, "claude")
+
+        assert json.loads(existing.read_text(encoding="utf-8"))["version"] == "1.0.8"
+
+    def test_dry_run_reports_the_same_outcome_as_a_real_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#2583 parity, now including which of the two skips applies."""
+        _write(
+            tmp_path / ".claude-plugin" / "plugin.json",
+            json.dumps({"name": "p", "version": "1.0.8"}),
+        )
+        self._capture(monkeypatch)
+        manifest = {"name": "p", "version": "1.0.9"}
+
+        preview = write_plugin_manifest_with_outcome(tmp_path, manifest, "claude", dry_run=True)
+        real = write_plugin_manifest_with_outcome(tmp_path, manifest, "claude")
+
+        assert preview == real
+
+    def test_unreadable_file_is_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path / ".claude-plugin" / "plugin.json", "{ not json")
+        warnings, _ = self._capture(monkeypatch)
+
+        result = write_plugin_manifest_with_outcome(tmp_path, {"name": "p"}, "claude")
+
+        assert result.action == "stale"
+        assert result.drift == ("<not a JSON object>",)
+        assert "not a JSON object" in warnings[0]

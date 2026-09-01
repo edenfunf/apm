@@ -62,7 +62,8 @@ Exit codes:
   1  Build or runtime error
   2  Manifest schema validation error
   3  Version alignment check failed (--check-versions)
-  4  Marketplace working-tree drift detected (--check-clean)
+  4  Pack-output drift detected (--check-clean): the marketplace working tree
+     or a committed plugin.json disagrees with apm.yml
 """
 
 
@@ -250,8 +251,9 @@ def _parse_marketplace_filter(
     help=(
         "Release gate: regenerate every configured marketplace output to a "
         "temp representation and diff against the effective on-disk path, "
-        "including --marketplace-path overrides. This mode is read-only and "
-        "exits 4 for drift."
+        "including --marketplace-path overrides, and check every committed "
+        "plugin.json against apm.yml. This mode is read-only and exits 4 for "
+        "drift."
     ),
 )
 @click.option(
@@ -528,6 +530,10 @@ def pack_cmd(  # noqa: PLR0913 -- Click handler, one param per CLI option
                     for msg in d_report.error_messages():
                         gate_errors.append({"code": "marketplace_drift", "message": msg})
 
+    plugin_drift_errors = _plugin_manifest_gate(result, check_clean, logger, json_output)
+    gate_errors.extend(plugin_drift_errors)
+    drift_gate_failed |= bool(plugin_drift_errors)
+
     # -- JSON output mode: consistent envelope --
     if json_output:
         envelope = {
@@ -537,7 +543,7 @@ def pack_cmd(  # noqa: PLR0913 -- Click handler, one param per CLI option
             "errors": [],
             "marketplace": {"outputs": []},
             "bundle": None,
-            "plugin_manifests": {"written": [], "skipped": [], "dry_run": []},
+            "plugin_manifests": {"written": [], "skipped": [], "stale": [], "dry_run": []},
             "version_alignment": version_alignment_payload,
             "drift": drift_payload,
         }
@@ -587,6 +593,48 @@ def pack_cmd(  # noqa: PLR0913 -- Click handler, one param per CLI option
         ctx.exit(3)
     if drift_gate_failed:
         ctx.exit(4)
+
+
+def _plugin_manifest_gate(result, check_clean: bool, logger, json_output: bool) -> list[dict]:
+    """Report committed ``plugin.json`` files that contradict ``apm.yml``.
+
+    Plugin manifests are a pack output too, but unlike ``marketplace.json``
+    they are never regenerated without ``--force`` -- so a stale one survives
+    every release and advertises the wrong version to consumers. This gate runs
+    outside the marketplace block above because ``plugin.json`` generation does
+    not need a ``marketplace:`` section to exist (#2553).
+
+    Reads the decision the producer already made rather than re-comparing on
+    disk, so the gate and the ``[!]`` warning can never disagree about which
+    files are stale. Returns the gate errors, empty when clean or when
+    ``--check-clean`` was not requested.
+    """
+    if not check_clean:
+        return []
+    stale = next(
+        (
+            list(sub.payload.get("stale", []))
+            for sub in result.producer_results
+            if sub.kind is OutputKind.PLUGIN_MANIFEST and isinstance(sub.payload, dict)
+        ),
+        [],
+    )
+    if not stale:
+        return []
+    if not json_output:
+        logger.error(f"Plugin manifest drift [manifests={len(stale)}]")
+        for entry in stale:
+            logger.info(f"    {entry['path']}  [drift: {', '.join(entry['fields'])}]")
+        logger.info(
+            "    Fix: re-run 'apm pack --force' to regenerate from apm.yml, then commit the result."
+        )
+    return [
+        {
+            "code": "plugin_manifest_drift",
+            "message": f"{entry['path']} disagrees with apm.yml on: {', '.join(entry['fields'])}",
+        }
+        for entry in stale
+    ]
 
 
 def _emit_drift_recipe(

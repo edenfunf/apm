@@ -324,6 +324,7 @@ class PluginManifestProducer:
         warnings: list[str] = []
         written: list[str] = []
         skipped: list[str] = []
+        stale: list[dict] = []
         dry_run_paths: list[str] = []
 
         for ecosystem in ecosystems:
@@ -349,13 +350,24 @@ class PluginManifestProducer:
                 outputs.append(write_result.path)
                 written.append(str(write_result.path))
             else:
+                # ``stale`` is a subset of ``skipped``: every preserved file
+                # still reports as skipped so existing consumers of the JSON
+                # envelope keep working, and the ones that contradict apm.yml
+                # are additionally named with the fields that disagree.
                 skipped.append(target_path)
+                if write_result.action == "stale":
+                    stale.append({"path": target_path, "fields": list(write_result.drift)})
 
         return ProducerResult(
             kind=OutputKind.PLUGIN_MANIFEST,
             outputs=outputs,
             warnings=warnings,
-            payload={"written": written, "skipped": skipped, "dry_run": dry_run_paths},
+            payload={
+                "written": written,
+                "skipped": skipped,
+                "stale": stale,
+                "dry_run": dry_run_paths,
+            },
         )
 
 
