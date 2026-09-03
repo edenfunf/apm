@@ -31,7 +31,7 @@ def _build_registry_with_diag(console, logger):
     are hitting the override and not the public default. Stays silent for the
     default public registry (defaults are quiet, overrides are visible).
     """
-    from ..registry.client import REGISTRY_SOURCE_LABELS
+    from ..registry.client import REGISTRY_SOURCE_LABELS, redact_mcp_registry_url
     from ..registry.integration import RegistryIntegration
 
     registry = RegistryIntegration()
@@ -40,7 +40,8 @@ def _build_registry_with_diag(console, logger):
     # condition needed, and nothing can raise on an unexpected source.
     label = REGISTRY_SOURCE_LABELS.get(registry.client.registry_url_source)
     if label:
-        line = f"Registry: {registry.client.registry_url} ({label})"
+        safe_url = redact_mcp_registry_url(registry.client.registry_url)
+        line = f"Registry: {safe_url} ({label})"
         if console:
             console.print(f"[muted]{line}[/muted]")
         else:
@@ -62,7 +63,9 @@ def _handle_registry_network_error(exc, registry, console, logger, action):
         # Fell over before the registry was constructed; let the caller
         # emit its generic error path with the original exception.
         return False
-    url = registry.client.registry_url
+    from ..registry.client import redact_mcp_registry_url
+
+    url = redact_mcp_registry_url(registry.client.registry_url)
     source = registry.client.registry_url_source
     if source == "env":
         hint = f"{MCP_REGISTRY_ENV} is set -- verify the URL is correct and reachable."

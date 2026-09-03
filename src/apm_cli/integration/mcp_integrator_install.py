@@ -153,7 +153,6 @@ def _install_registry_group(
     logger: Any,
     managed_target_servers: dict[str, set[str]] | None,
     prevalidated_servers: dict[str, dict] | None = None,
-    prevalidated_registry_servers: dict[str, dict] | None = None,
     fail_on_write_error: bool = False,
 ) -> int:
     """Process one group of registry deps through a single ``MCPServerOperations`` instance.
@@ -1036,6 +1035,7 @@ def run_mcp_install(
     diagnostics=None,
     scope: InstallScope | None = None,
     managed_target_servers: dict[str, set[str]] | None = None,
+    prevalidated_registry_servers: dict[str, dict] | None = None,
     fail_on_write_error: bool = False,
 ) -> int:
     """Install MCP dependencies.

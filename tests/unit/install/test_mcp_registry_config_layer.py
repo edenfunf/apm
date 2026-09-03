@@ -84,10 +84,16 @@ def recorded_registry(monkeypatch):
 @pytest.fixture
 def project(monkeypatch, tmp_path):
     """A temp project declaring one registry-backed MCP dependency."""
+    from apm_cli import config as config_mod
+
     (tmp_path / "apm.yml").write_text(MANIFEST, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    config_dir = tmp_path / ".apm"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", str(config_dir / "config.json"))
+    config_mod._invalidate_config_cache()
     return tmp_path
 
 
@@ -104,7 +110,9 @@ def _printed_hosts(output: str) -> set[str]:
 
 def test_manifest_install_uses_configured_registry(monkeypatch, recorded_registry, project):
     """The persisted config layer reaches the manifest-driven install path."""
-    monkeypatch.setattr("apm_cli.config.get_mcp_registry_url", lambda: CONFIG_REGISTRY)
+    from apm_cli.config import set_mcp_registry_url
+
+    set_mcp_registry_url(CONFIG_REGISTRY)
 
     result = _install()
 

@@ -217,6 +217,7 @@ class TestMcpRegistryUrlConfig:
 
     def test_get_returns_none_when_absent(self, isolated_config):
         assert config_mod.get_mcp_registry_url() is None
+        assert not isolated_config.exists()
 
     def test_set_and_get_round_trip(self, isolated_config):
         config_mod.set_mcp_registry_url("https://corp.mcp.example.com")

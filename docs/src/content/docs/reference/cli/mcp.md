@@ -100,7 +100,7 @@ list):
 | `--url URL` | Server URL for remote transports. |
 | `--env KEY=VALUE` | Environment variable. Repeatable. |
 | `--header KEY=VALUE` | HTTP header. Repeatable. |
-| `--registry URL` | Custom registry URL for this invocation. |
+| `--registry URL` | Custom registry URL for this install; persisted on the dependency in `apm.yml`. |
 | `--mcp-version VER` | Pin the registry entry to a specific version. |
 | `--dev` | Add to `devDependencies`. |
 | `--dry-run` | Resolve and print without writing `apm.yml`. |
@@ -115,13 +115,13 @@ list):
 |---|---|
 | `MCP_REGISTRY_URL` | Override the registry endpoint used by `list`, `search`, `show`, and `install`. When set, every command prints a one-line `Registry: <url> (from MCP_REGISTRY_URL)` diagnostic so the override is visible. Unset: the public default registry is used silently. |
 
-Network failures against an overridden registry surface an explicit
-hint pointing at `MCP_REGISTRY_URL`. Direct `apm install --mcp` lookup
-also fails closed against the public default before writing user state.
+Network failures against an overridden registry name the setting that supplied
+the URL so misconfigurations are easy to spot in CI logs. Direct
+`apm install --mcp` lookup also fails closed before writing user state.
 
 Registry URL resolution order (first set value wins):
 
-1. `--registry <url>` flag on `apm mcp install` / `apm install --mcp` (this invocation only)
+1. `--registry <url>` flag on `apm mcp install` / `apm install --mcp` (used immediately and persisted on the dependency in `apm.yml`)
 2. `MCP_REGISTRY_URL` environment variable -- prints `Registry: <url> (from MCP_REGISTRY_URL)` diagnostic
 3. `mcp-registry-url` in `~/.apm/config.json` (set via `apm config set mcp-registry-url`) -- prints `Registry: <url> (from apm config)` diagnostic
 4. Built-in public default (silent)
