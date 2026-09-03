@@ -137,7 +137,7 @@ def _announce_registry_endpoint(registry_client: Any, logger: Any) -> None:
     logger.progress(f"Using MCP registry: {safe_url} ({label})", symbol="info")
 
 
-def _install_registry_group(
+def _install_registry_group(  # noqa: PLR0913
     operations: Any,
     group_dep_names: list,
     group_dep_map: dict,
@@ -569,6 +569,70 @@ def _declared_manifest_target_runtimes(
 
     projected = EffectiveTargetDecision(parsed, "apm.yml").runtime_targets
     return list(projected or ()), True
+
+
+def partition_user_scope_runtimes(
+    target_runtimes: list[str],
+) -> tuple[list[str], list[str]]:
+    """Partition runtime names by their adapter's user-scope capability."""
+    from apm_cli.factory import ClientFactory
+
+    supported: list[str] = []
+    skipped: list[str] = []
+    for runtime in target_runtimes:
+        try:
+            client = ClientFactory.create_client(runtime)
+        except ValueError:
+            skipped.append(runtime)
+            continue
+        destination = supported if client.supports_user_scope else skipped
+        destination.append(runtime)
+    return supported, skipped
+
+
+def unavailable_user_scope_targets_message(
+    target_decision: EffectiveTargetDecision,
+    scoped_targets: list[str] | None,
+    skipped_targets: list[str],
+) -> str:
+    """Render recovery that distinguishes disabled from workspace-only targets."""
+    original_targets = set(target_decision.runtime_targets or [])
+    disabled_targets = original_targets - set(scoped_targets or [])
+    experimental_hint = "enable selected experimental targets, " if disabled_targets else ""
+    rendered_targets = ", ".join(sorted(original_targets or set(skipped_targets)))
+    return (
+        "Selected targets are unavailable for user-scope MCP installation "
+        f"({rendered_targets}; source: {target_decision.source}); "
+        f"{experimental_hint}choose a global-capable --target or omit --global"
+    )
+
+
+def discover_user_scope_mcp_runtimes(
+    project_root: Path,
+    *,
+    exclude: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Discover installed MCP runtimes and partition them for user scope."""
+    discovered = _discover_installed_runtimes(project_root, user_scope=True)
+    discovered = filter_excluded_mcp_runtimes(discovered, exclude)
+    return partition_user_scope_runtimes(discovered)
+
+
+def filter_excluded_mcp_runtimes(
+    target_runtimes: list[str],
+    exclude: str | None,
+) -> list[str]:
+    """Apply one canonical runtime exclusion, including target aliases."""
+    if not exclude:
+        return list(target_runtimes)
+    exclusions = {exclude}
+    try:
+        from apm_cli.core.target_detection import EffectiveTargetDecision
+
+        exclusions.update(EffectiveTargetDecision(exclude, "--exclude").runtime_equivalents or ())
+    except KeyError:
+        pass
+    return [runtime for runtime in target_runtimes if runtime not in exclusions]
 
 
 def _resolve_target_runtimes(
@@ -1020,7 +1084,7 @@ def _print_mcp_summary(
         console.print(f"[green]{STATUS_SYMBOLS['success']} All servers up to date[/green]")
 
 
-def run_mcp_install(
+def run_mcp_install(  # noqa: PLR0913
     mcp_deps: list,
     runtime: str | None = None,
     exclude: str | None = None,

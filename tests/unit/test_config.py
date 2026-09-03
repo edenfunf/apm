@@ -266,7 +266,7 @@ class TestMcpRegistryUrlConfig:
             "https://mcp.example.com/path#fragment-value",
         ],
     )
-    def test_set_rejects_query_and_fragment(self, isolated_config, url):
+    def test_set_rejects_query_and_fragment_without_leaking_values(self, isolated_config, url):
         with pytest.raises(ValueError, match="query strings and fragments"):
             config_mod.set_mcp_registry_url(url)
 

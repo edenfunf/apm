@@ -35,19 +35,13 @@ _MAX_REGISTRY_URL_LENGTH = 2048
 
 
 def _redact_url_credentials(url: str) -> str:
-    """Strip credentials and query data from a URL before logging it.
-
-    Registry URLs may legitimately carry credentials for private mirrors
-    (``https://user:token@registry.internal/``); we accept them at the
-    flag layer but never echo them back to the terminal where they could
-    leak via shell history, CI logs, or screenshots.
-
-    Delegates to the registry client's shared display boundary so every
-    registry diagnostic applies the same credential-containment rule.
-    """
+    """Strip credentials and query data from a URL before logging it."""
     from ...registry.client import redact_mcp_registry_url
 
-    return redact_mcp_registry_url(url)
+    redacted = redact_mcp_registry_url(url)
+    if redacted == "<invalid registry URL>":
+        return "<redacted-invalid-registry-url>"
+    return redacted
 
 
 def _is_local_or_metadata_host(host: str | None) -> bool:
@@ -108,16 +102,22 @@ def validate_registry_url(value: str | None) -> str | None:
             f"(e.g. https://mcp.internal.example.com)"
         )
     scheme = parsed.scheme.lower()
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise click.UsageError(f"--registry: Invalid URL '{safe_value}': invalid port") from exc
     if scheme not in _ALLOWED_URL_SCHEMES:
         raise click.UsageError(
             f"--registry: Invalid URL '{safe_value}': scheme '{scheme}' is not "
             f"supported; use http:// or https://. WebSocket URLs (ws/wss) "
             f"and file:// paths are rejected for security."
         )
+    if parsed.username is not None:
+        raise click.UsageError("--registry: embedded credentials are not supported")
     if parsed.query or parsed.fragment:
         raise click.UsageError(
-            f"--registry: Invalid URL '{safe_value}': query strings and fragments "
-            "are not supported."
+            "--registry: base URL must not contain a query or fragment; "
+            "query strings and fragments are not supported"
         )
     return normalized
 
@@ -155,6 +155,21 @@ def resolve_registry_url(
     url, source = resolve_mcp_registry_url(cli_value)
     if source == "default":
         return None, "default"
+
+    try:
+        validated_url = validate_registry_url(url)
+    except click.UsageError as exc:
+        detail = exc.message.removeprefix("--registry: ")
+        if source == "env":
+            raise click.UsageError(f"MCP_REGISTRY_URL is invalid: {detail}") from exc
+        if source == "config":
+            raise click.UsageError(
+                "Configured mcp-registry-url is invalid; run "
+                f"'apm config unset mcp-registry-url' and retry: {detail}"
+            ) from exc
+        raise
+    if validated_url is not None:
+        url = validated_url
 
     if source == "explicit":
         source = "flag"

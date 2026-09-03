@@ -782,15 +782,16 @@ def _validate_mcp_registry_url(url: str) -> str:
         _ = parsed.port
     except ValueError as exc:
         raise ValueError("mcp-registry-url: URL has an invalid port") from exc
-    if parsed.query or parsed.fragment:
-        raise ValueError("mcp-registry-url: base URL must not contain a query or fragment")
     if not parsed.hostname:
         raise ValueError(
             f"mcp-registry-url: Invalid URL '{safe_url}': expected scheme://host "
             f"(e.g. https://mcp.internal.example.com)"
         )
     if parsed.query or parsed.fragment:
-        raise ValueError("mcp-registry-url: query strings and fragments are not supported")
+        raise ValueError(
+            "mcp-registry-url: base URL must not contain a query or fragment; "
+            "query strings and fragments are not supported"
+        )
     return normalized
 
 

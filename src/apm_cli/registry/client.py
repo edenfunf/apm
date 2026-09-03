@@ -108,7 +108,7 @@ def redact_mcp_registry_url(url: str) -> str:
     """Return a registry URL safe for terminal and log output."""
     try:
         parsed = urlparse(url)
-        if not parsed.netloc or not parsed.hostname:
+        if not parsed.scheme or not parsed.netloc or not parsed.hostname:
             return "<invalid registry URL>"
         host = parsed.hostname or ""
         if ":" in host:
@@ -266,9 +266,7 @@ def _resolve_timeout() -> tuple:
 class SimpleRegistryClient:
     """Simple client for querying MCP registries for server discovery."""
 
-    def __init__(
-        self, registry_url: str | None = None, registry_source: str | None = None
-    ):
+    def __init__(self, registry_url: str | None = None, registry_source: str | None = None):
         """Initialize the registry client.
 
         Args:
@@ -287,7 +285,11 @@ class SimpleRegistryClient:
         source_override = os.environ.get("APM_MCP_REGISTRY_SOURCE")
         if registry_source in {"flag", "env", "config"}:
             source = registry_source
-        elif registry_url is None and source == "env" and source_override in {"flag", "env", "config"}:
+        elif (
+            registry_url is None
+            and source == "env"
+            and source_override in {"flag", "env", "config"}
+        ):
             source = source_override
         # Normalise: strip whitespace and trailing slashes so path joins
         # never produce double-slash URLs (e.g. ``https://host//v0/servers``).
