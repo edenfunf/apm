@@ -31,6 +31,9 @@ from apm_cli.install.errors import (
     PolicyViolationError,
     RequiredIntegrationError,
 )
+from apm_cli.install.errors import (
+    frozen_install_tip as _frozen_install_tip,
+)
 from apm_cli.install.gitlab_resolver import _try_resolve_gitlab_direct_shorthand
 from apm_cli.install.helpers.ref_reuse import is_git_semver_resolution_eligible
 
@@ -1703,20 +1706,6 @@ def install(  # noqa: C901, PLR0913
 
     if command_result is not None:
         ctx.exit(command_result.exit_code)
-
-
-def _frozen_install_tip(error: FrozenInstallError) -> str:
-    """Return recovery guidance tailored to package or MCP lock drift."""
-    has_mcp_drift = any("MCP server" in reason for reason in error.reasons)
-    has_package_drift = any("MCP server" not in reason for reason in error.reasons)
-    if has_mcp_drift and has_package_drift:
-        return (
-            "Tip: run 'apm outdated' to inspect package drift, then run "
-            "'apm install' without --frozen to repair package and MCP lock state."
-        )
-    if has_mcp_drift:
-        return "Tip: run 'apm install' without --frozen to create or repair MCP lock state."
-    return "Tip: run 'apm outdated' to see what changed, then 'apm update'."
 
 
 def _install_apm_packages(ctx, outcome):
