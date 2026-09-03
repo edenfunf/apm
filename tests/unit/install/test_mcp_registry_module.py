@@ -348,6 +348,15 @@ class TestValidateRegistryUrl:
         assert "topsecret" not in msg
         assert "user:" not in msg
 
+    def test_path_credentials_redacted_in_invalid_url_message(self):
+        import click
+
+        with pytest.raises(click.UsageError) as exc_info:
+            validate_registry_url("https:///name:password-value@registry.example.com")
+        message = str(exc_info.value)
+        assert "name" not in message
+        assert "password-value" not in message
+
     def test_credentials_redacted_in_unsupported_scheme_message(self):
         """UsageError text for an unsupported scheme must not echo credentials."""
         import click
