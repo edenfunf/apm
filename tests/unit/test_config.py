@@ -259,6 +259,17 @@ class TestMcpRegistryUrlConfig:
         with pytest.raises(ValueError, match="Invalid URL"):
             config_mod.set_mcp_registry_url("https://")
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://mcp.example.com/path?token=query-value",
+            "https://mcp.example.com/path#fragment-value",
+        ],
+    )
+    def test_set_rejects_query_and_fragment(self, isolated_config, url):
+        with pytest.raises(ValueError, match="query strings and fragments"):
+            config_mod.set_mcp_registry_url(url)
+
     def test_set_rejects_embedded_credentials(self, isolated_config):
         with pytest.raises(ValueError, match="embedded credentials are not supported"):
             config_mod.set_mcp_registry_url("https://user:token@corp.mcp.example.com")

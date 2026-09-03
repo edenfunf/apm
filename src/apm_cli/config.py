@@ -789,6 +789,8 @@ def _validate_mcp_registry_url(url: str) -> str:
             f"mcp-registry-url: Invalid URL '{safe_url}': expected scheme://host "
             f"(e.g. https://mcp.internal.example.com)"
         )
+    if parsed.query or parsed.fragment:
+        raise ValueError("mcp-registry-url: query strings and fragments are not supported")
     return normalized
 
 

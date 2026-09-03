@@ -113,21 +113,15 @@ list):
 
 | Variable | Effect |
 |---|---|
-| `MCP_REGISTRY_URL` | Override the registry endpoint used by `list`, `search`, `show`, and `install`. When set, every command prints a one-line `Registry: <url> (from MCP_REGISTRY_URL)` diagnostic so the override is visible. Unset: the public default registry is used silently. |
+| `MCP_REGISTRY_URL` | Override the registry endpoint used by `list`, `search`, `show`, and `install`. Read-only commands print `Registry: <url> (from MCP_REGISTRY_URL)`; installs print `Using MCP registry: <url> (from MCP_REGISTRY_URL)`. Unset: the public default registry is used silently. |
 
 Network failures against an overridden registry name the setting that supplied
 the URL so misconfigurations are easy to spot in CI logs. Direct
 `apm install --mcp` lookup also fails closed before writing user state.
 
-Registry URL resolution order (first set value wins):
-
-1. `--registry <url>` flag on `apm mcp install` / `apm install --mcp` (used immediately and persisted on the dependency in `apm.yml`)
-2. `MCP_REGISTRY_URL` environment variable -- prints `Registry: <url> (from MCP_REGISTRY_URL)` diagnostic
-3. `mcp-registry-url` in `~/.apm/config.json` (set via `apm config set mcp-registry-url`) -- prints `Registry: <url> (from apm config)` diagnostic
-4. Built-in public default (silent)
-
-The same chain resolves the `dependencies.mcp` entries `apm install` reads from
-`apm.yml`; a per-dependency `registry:` URL overrides it for that entry only.
+See [`apm config`](../config/#resolution-order) for the canonical resolution
+order. The same chain resolves `dependencies.mcp`; a per-dependency
+`registry:` URL overrides it for that entry only.
 Whenever a non-default endpoint is in effect, `apm install` names it once with
 `Using MCP registry: <url> (<source>)` before the lookup.
 

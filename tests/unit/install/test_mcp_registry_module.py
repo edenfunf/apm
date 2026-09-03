@@ -309,6 +309,22 @@ class TestValidateRegistryUrl:
         with pytest.raises(Exception):  # noqa: B017
             validate_registry_url("file:///etc/passwd")
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://registry.example.com/path?token=query-value",
+            "https://registry.example.com/path#fragment-value",
+        ],
+    )
+    def test_query_and_fragment_rejected_without_echoing_values(self, url):
+        import click
+
+        with pytest.raises(click.UsageError, match="query strings and fragments") as exc_info:
+            validate_registry_url(url)
+        message = str(exc_info.value)
+        assert "query-value" not in message
+        assert "fragment-value" not in message
+
     def test_javascript_scheme_rejected(self):
         with pytest.raises(Exception):  # noqa: B017
             validate_registry_url("javascript:alert(1)")
