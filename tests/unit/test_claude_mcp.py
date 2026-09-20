@@ -371,6 +371,63 @@ class TestClaudeTransportChange(unittest.TestCase):
         self.assertEqual(srv["oauthAccount"], {"accountUuid": "abc"})
         self.assertNotIn("url", srv)
 
+    def test_mixed_entry_from_earlier_release_is_repaired(self):
+        """An entry already carrying both transports is cleaned, not matched.
+
+        Releases that merged unconditionally left entries describing both
+        transports at once. Such an entry classifies as remote on its own
+        ``url``, so a comparison against the update would call the transport
+        unchanged and keep the stdio keys forever.
+        """
+        self.mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "srv": {
+                            "type": "http",
+                            "url": "https://example.com/mcp",
+                            "command": "npx",
+                            "args": ["-y", "srv-mcp"],
+                            "env": {"TOKEN": "leftover"},
+                            "cwd": "/tmp/srv",
+                            "oauthAccount": {"accountUuid": "abc"},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.adapter.update_config({"srv": {"type": "http", "url": "https://example.com/mcp"}})
+        srv = self._entry()
+        self.assertEqual(srv["type"], "http")
+        self.assertEqual(srv["oauthAccount"], {"accountUuid": "abc"})
+        for key in ("command", "args", "env", "cwd"):
+            self.assertNotIn(key, srv)
+
+    def test_mixed_entry_repaired_towards_stdio(self):
+        """The same repair applies when the update declares stdio."""
+        self.mcp_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "srv": {
+                            "type": "local",
+                            "url": "https://example.com/mcp",
+                            "headers": {"Authorization": "Bearer leftover"},
+                            "command": "npx",
+                            "args": ["-y", "srv-mcp"],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.adapter.update_config({"srv": {"type": "local", "command": "npx"}})
+        srv = self._entry()
+        self.assertEqual(srv["type"], "stdio")
+        self.assertNotIn("url", srv)
+        self.assertNotIn("headers", srv)
+
     def test_unchanged_transport_still_shallow_merges(self):
         """Without a transport change the entry keeps keys the update omits."""
         self.mcp_path.write_text(

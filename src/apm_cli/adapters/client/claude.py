@@ -66,9 +66,9 @@ class ClaudeClientAdapter(CopilotClientAdapter):
     # Entry ``type`` values Claude Code uses for URL-addressed servers.
     _REMOTE_TYPES = ("http", "sse", "streamable-http")
 
-    # Entry keys that describe one transport, and so must not outlive a
-    # redeclaration under the other one. ``type`` names the transport itself,
-    # so it is stale in either direction; the update always restates it.
+    # Entry keys that describe one transport, and so belong only to an entry
+    # declaring it. ``type`` names the transport itself, so it is stale under
+    # either heading; the update always restates it.
     _REMOTE_TRANSPORT_KEYS = frozenset({"type", "url", "headers"})
     _STDIO_TRANSPORT_KEYS = frozenset({"type", "command", "args", "env", "cwd"})
 
@@ -123,19 +123,25 @@ class ClaudeClientAdapter(CopilotClientAdapter):
 
     @classmethod
     def _retained_previous_entry(cls, prev: dict, new_cfg: dict) -> dict:
-        """Return *prev* without the keys of a transport it no longer declares.
+        """Return *prev* without the keys of the transport *new_cfg* is not.
 
         A redeclaration that switches transport must not leave the previous
         transport's keys behind.  A surviving ``url`` keeps the entry
         classified as remote, so the stdio shape never wins and a stale
-        ``Authorization`` header stays in the Claude Code config.  Keys APM
-        does not manage (hand-authored OAuth blocks and the like) describe no
-        transport and are retained either way.
+        ``Authorization`` header stays in the Claude Code config.
+
+        The keys are selected from the update rather than from a comparison
+        of the two entries, so an entry already carrying both transports --
+        written by a release that merged them unconditionally -- is repaired
+        by the next install instead of matching its own mixed shape and
+        surviving.  Keys APM does not manage (hand-authored OAuth blocks and
+        the like) describe no transport and are retained either way.
         """
-        was_remote = cls._is_remote_mcp_entry(prev)
-        if was_remote == cls._is_remote_mcp_entry(new_cfg):
-            return prev
-        stale = cls._REMOTE_TRANSPORT_KEYS if was_remote else cls._STDIO_TRANSPORT_KEYS
+        stale = (
+            cls._STDIO_TRANSPORT_KEYS
+            if cls._is_remote_mcp_entry(new_cfg)
+            else cls._REMOTE_TRANSPORT_KEYS
+        )
         return {key: value for key, value in prev.items() if key not in stale}
 
     @classmethod
@@ -146,9 +152,8 @@ class ClaudeClientAdapter(CopilotClientAdapter):
         only on plugin- or hand-authored configs (e.g. OAuth blocks)
         survive when an update omits them.  Keys in *new* overwrite *old* on
         conflict so APM/registry installs still refresh ``command``/``args``/etc.
-        The previous entry first drops the keys of a transport the update
-        replaces, so a server redeclared under another transport describes
-        exactly one.
+        The previous entry first drops the keys of the transport the update
+        does not declare, so the merged entry describes exactly one.
         """
         for name, new_cfg in config_updates.items():
             if not isinstance(new_cfg, dict):
