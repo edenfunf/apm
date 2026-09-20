@@ -46,7 +46,21 @@ _RESERVED_EXTRA_KEYS = _KNOWN_DICT_KEYS - {"extra"}
 # Harness aliases for modeled fields share the same passthrough boundary. Keeping
 # them beside the manifest vocabulary lets parsing report rejected keys truthfully
 # before every adapter consumes the filtered ``extra`` mapping.
-_HARNESS_EXTRA_ALIASES = frozenset({"enabled", "environment", "http_headers", "id"})
+_HARNESS_EXTRA_ALIASES = frozenset(
+    {
+        "enabled",
+        "environment",
+        "http_headers",
+        "id",
+        # Codex renders a ``headers`` value that references an environment
+        # variable into one of these two fields instead of ``http_headers``.
+        # They alias the same modeled field, so they share its boundary: a
+        # transitive dependency must not reach an Authorization header through
+        # passthrough that ``headers`` modeling never sees.
+        "bearer_token_env_var",
+        "env_http_headers",
+    }
+)
 _EXTRA_DENYLIST = _RESERVED_EXTRA_KEYS | _HARNESS_EXTRA_ALIASES
 
 _NAME_REGEX = re.compile(r"^[a-zA-Z0-9@_][a-zA-Z0-9._@/:=-]{0,127}$")
