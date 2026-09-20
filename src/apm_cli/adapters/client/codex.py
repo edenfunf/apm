@@ -36,6 +36,14 @@ _CODEX_BEARER_HEADER = "authorization"
 # case-insensitive per RFC 7235; Codex always writes it as ``Bearer``.
 _CODEX_ENV_HEADER_VALUE_RE = re.compile(rf"^{_ENV_VAR_RE.pattern}$")
 _CODEX_BEARER_VALUE_RE = re.compile(rf"^(?i:Bearer)\s+{_ENV_VAR_RE.pattern}$")
+# Any reference still standing in a resolved value, deliberately wider than the
+# canonical parser: a spelling it does not model, such as the shell default in
+# ``${VAR:-}``, is no more static than a ``${VAR}`` Codex could resolve, and
+# writing it to ``http_headers`` sends the braces to the server. Widening the
+# report here, rather than the parser, keeps every other adapter's placeholder
+# semantics untouched. ``${input:...}`` is excluded: input variables are
+# collected elsewhere and carry their own warning.
+_CODEX_UNSUPPORTED_REFERENCE_RE = re.compile(r"\$\{(?!input:)")
 
 
 class CodexClientAdapter(MCPClientAdapter):
@@ -330,7 +338,7 @@ class CodexClientAdapter(MCPClientAdapter):
                 if env_header:
                     env_http_headers[h_name] = env_header.group(1)
                     continue
-                if _ENV_VAR_RE.search(resolved):
+                if _CODEX_UNSUPPORTED_REFERENCE_RE.search(resolved):
                     unsupported_headers.append(h_name)
                     continue
                 http_headers[h_name] = resolved
@@ -339,8 +347,9 @@ class CodexClientAdapter(MCPClientAdapter):
                     f"Skipping header(s) {', '.join(unsupported_headers)} of MCP server "
                     f"'{server_name}' for Codex CLI: Codex reads a header from the "
                     "environment only when the value is exactly ${VAR} or, for "
-                    "Authorization, `Bearer ${VAR}`. Split the literal text out of "
-                    "the value, or export the whole header value as one variable.",
+                    "Authorization, `Bearer ${VAR}`. Literal text around the "
+                    "reference, or a shell-style default such as ${VAR:-}, has no "
+                    "Codex equivalent; export the whole header value as one variable.",
                     symbol="warning",
                 )
             # Scalars precede the sub-tables tomlkit renders for the dict values.

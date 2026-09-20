@@ -402,6 +402,36 @@ class TestCodexClientAdapter(unittest.TestCase):
         self.assertIn("X-Mixed", mock_warn.call_args[0][0])
 
     @patch("apm_cli.adapters.client.codex._rich_warning")
+    def test_shell_default_placeholder_is_skipped_with_warning(self, mock_warn):
+        """``${VAR:-}`` is a reference Codex cannot resolve from either field.
+
+        The canonical parser does not model the shell default, so this value
+        must not fall through to ``http_headers`` as though it were static --
+        that is the shape the reported context7 manifest declares.
+        """
+        config = self.adapter._format_server_config(
+            self._remote_with_headers([("Authorization", "${CONTEXT7_API_KEY:-}")])
+        )
+        self.assertNotIn("http_headers", config)
+        self.assertNotIn("env_http_headers", config)
+        self.assertNotIn("bearer_token_env_var", config)
+        mock_warn.assert_called_once()
+        self.assertIn("Authorization", mock_warn.call_args[0][0])
+
+    @patch("apm_cli.adapters.client.codex._rich_warning")
+    def test_input_variable_header_is_not_swept_into_the_skip_path(self, mock_warn):
+        """``${input:...}`` is collected elsewhere and keeps its own handling.
+
+        Widening the unsupported-reference check must not capture it, or the
+        input-variable path would lose its header.
+        """
+        config = self.adapter._format_server_config(
+            self._remote_with_headers([("X-Project", "${input:proj}")])
+        )
+        self.assertEqual(config["http_headers"], {"X-Project": "${input:proj}"})
+        mock_warn.assert_not_called()
+
+    @patch("apm_cli.adapters.client.codex._rich_warning")
     def test_bearer_placeholder_outside_authorization_is_skipped(self, mock_warn):
         """Only Authorization has a bearer field; elsewhere the shape is mixed."""
         config = self.adapter._format_server_config(
