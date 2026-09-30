@@ -442,6 +442,46 @@ class TestClaudeTransportChange(unittest.TestCase):
         self.assertEqual(srv["cwd"], "/tmp/srv")
 
 
+@pytest.mark.parametrize("user_scope", [False, True], ids=["project", "user"])
+@pytest.mark.parametrize(
+    ("previous", "update", "expected"),
+    [
+        (
+            {"type": "http", "url": "https://example.invalid/mcp", "headers": {"X-Key": "old"}},
+            {"headers": {"X-Key": "new"}},
+            {"type": "http", "url": "https://example.invalid/mcp", "headers": {"X-Key": "new"}},
+        ),
+        (
+            {"type": "sse", "url": "https://example.invalid/old"},
+            {"url": "https://example.invalid/new"},
+            {"type": "sse", "url": "https://example.invalid/new"},
+        ),
+        (
+            {"type": "stdio", "command": "python", "args": ["old"], "cwd": "/fixture"},
+            {"args": ["new"]},
+            {"type": "stdio", "command": "python", "args": ["new"], "cwd": "/fixture"},
+        ),
+    ],
+    ids=["http-headers", "sse-url", "stdio-args"],
+)
+def test_partial_updates_preserve_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    user_scope: bool,
+    previous: dict,
+    update: dict,
+    expected: dict,
+) -> None:
+    """An update omitting its transport keeps compatible connection fields."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    adapter = ClaudeClientAdapter(project_root=tmp_path, user_scope=user_scope)
+    assert adapter.update_config({"srv": previous}) is True
+    assert adapter.update_config({"srv": update}) is True
+    document = json.loads(Path(adapter.get_config_path()).read_text(encoding="utf-8"))
+    assert document["mcpServers"]["srv"] == expected
+
+
 class TestMCPIntegratorClaudeStaleCleanup(unittest.TestCase):
     """``MCPIntegrator.remove_stale`` for Claude project / user files."""
 

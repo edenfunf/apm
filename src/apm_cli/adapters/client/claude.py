@@ -66,9 +66,8 @@ class ClaudeClientAdapter(CopilotClientAdapter):
     # Entry ``type`` values Claude Code uses for URL-addressed servers.
     _REMOTE_TYPES = ("http", "sse", "streamable-http")
 
-    # Entry keys that describe one transport, and so belong only to an entry
-    # declaring it. ``type`` names the transport itself, so it is stale under
-    # either heading; the update always restates it.
+    # Transport fields are replaced across families; a partial update can
+    # retain an omitted type only when it still belongs to the selected family.
     _REMOTE_TRANSPORT_KEYS = frozenset({"type", "url", "headers"})
     _STDIO_TRANSPORT_KEYS = frozenset({"type", "command", "args", "env", "cwd"})
 
@@ -133,16 +132,18 @@ class ClaudeClientAdapter(CopilotClientAdapter):
         The keys are selected from the update rather than from a comparison
         of the two entries, so an entry already carrying both transports --
         written by a release that merged them unconditionally -- is repaired
-        by the next install instead of matching its own mixed shape and
+        by the next install that writes it instead of matching its own mixed shape and
         surviving.  Keys APM does not manage (hand-authored OAuth blocks and
         the like) describe no transport and are retained either way.
         """
-        stale = (
-            cls._STDIO_TRANSPORT_KEYS
-            if cls._is_remote_mcp_entry(new_cfg)
-            else cls._REMOTE_TRANSPORT_KEYS
-        )
-        return {key: value for key, value in prev.items() if key not in stale}
+        declares_transport = any(new_cfg.get(key) for key in ("type", "url", "command"))
+        is_remote = cls._is_remote_mcp_entry(new_cfg if declares_transport else prev)
+        stale = cls._STDIO_TRANSPORT_KEYS if is_remote else cls._REMOTE_TRANSPORT_KEYS
+        retained = {key: value for key, value in prev.items() if key not in stale}
+        compatible_types = cls._REMOTE_TYPES if is_remote else ("local", "stdio")
+        if "type" not in new_cfg and prev.get("type") in compatible_types:
+            retained["type"] = prev["type"]
+        return retained
 
     @classmethod
     def _merge_mcp_server_dicts(cls, existing_servers: dict, config_updates: dict) -> None:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude MCP redeclarations drop stale transport fields and repair mixed entries when rewritten, while preserving partial updates and unmanaged configuration. -- by @edenfunf (#3041)
+
 ## [0.32.0] - 2026-09-25
 
 ### Changed
@@ -15,12 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Autopilot maintainer canvas removes a Decide row as soon as GitHub confirms `status/accepted`, without waiting for a full issue/PR refetch.
-- Issue and PR triage no longer skip bot-authored items (Copilot, Dependabot, github-actions). They stay in the queue like any other contribution. (#3024)
-- PR-review scheduler no longer queues every open pull request. A fresh review requires the `panel-review` label (same trigger as the Agentic Workflow), `status/accepted` on the PR, or an explicit named PR list. The reviewing session also requires `status/accepted` on the PR or a linked issue; otherwise scheduler and review-worker stop with no comment. The worker may clear `panel-review`; the scheduler does not comment or change labels. Both also apply a CODEOWNERS last-comment gate: read the last CODEOWNER comment as conditions and evaluate them against later comments AND labels on the PR and linked issues. Drop or `noop` only when those conditions are unmet or unclear. Named list does not bypass that gate.
-- Issue-triage sweep no longer classifies real GitHub bug forms as spam: heading/list line matches no longer swallow the rest of the body after markup strip.
-- Preserve marketplace discovery provenance across dependency updates so `plugin@marketplace` uninstall aliases keep working in project and global scope. -- by @mfroembgen (#2949)
-- A Claude Code MCP entry no longer describes two transports at once. Redeclaring a server under another transport now drops the previous transport's keys, so a remote `url`/`headers` pair (and the `Authorization` header it carries) cannot outlive a switch to stdio, and the entry is normalized to `type: "stdio"` rather than keeping Copilot's `type: "local"`. An entry an earlier release left carrying both transports is repaired by the next install that writes it. Keys APM does not manage, such as hand-authored OAuth blocks, are still preserved. -- by @edenfunf (#2994)
 - `apm prune` removes orphaned manifestless skills while retaining bundles and roots containing needed nested packages. Keep personal files outside `apm_modules/` and preview with `--dry-run`, since personal files inside removable package roots are also deleted. (by @fangkangmi, #3057)
 - `apm install` now rejects incompatible immutable dependency requirements, including inconsistent frozen replay and short SHA pins, instead of silently keeping one version; equivalent tag/SHA pins remain valid. Align root/parent refs, then run `apm install` without `--frozen` to regenerate the lockfile. (#3061)
 - `apm marketplace check` now authenticates bare `owner/repo` sources through the configured default host and standard token chain, so private GitHub and GHES checks honor `GITHUB_APM_PAT`. (by @yfoel, #2917)
