@@ -34,8 +34,7 @@ _CODEX_BEARER_HEADER = "authorization"
 # Reuse the canonical placeholder syntax so the two spellings APM accepts
 # (``${VAR}`` and ``${env:VAR}``) cannot drift apart here. The auth scheme is
 # case-insensitive per RFC 7235; Codex always writes it as ``Bearer``.
-_CODEX_ENV_HEADER_VALUE_RE = re.compile(rf"^{_ENV_VAR_RE.pattern}$")
-_CODEX_BEARER_VALUE_RE = re.compile(rf"^(?i:Bearer)\s+{_ENV_VAR_RE.pattern}$")
+_CODEX_BEARER_VALUE_RE = re.compile(rf"(?i:Bearer) +{_ENV_VAR_RE.pattern}")
 # Any reference still standing in a resolved value, deliberately wider than the
 # canonical parser: a spelling it does not model, such as the shell default in
 # ``${VAR:-}``, is no more static than a ``${VAR}`` Codex could resolve, and
@@ -330,11 +329,11 @@ class CodexClientAdapter(MCPClientAdapter):
                 resolved = self._resolve_variable_placeholders(
                     h_value, env_overrides or {}, runtime_vars or {}
                 )
-                bearer = _CODEX_BEARER_VALUE_RE.match(resolved)
+                bearer = _CODEX_BEARER_VALUE_RE.fullmatch(resolved)
                 if bearer and h_name.lower() == _CODEX_BEARER_HEADER:
                     bearer_token_env_var = bearer.group(1)
                     continue
-                env_header = _CODEX_ENV_HEADER_VALUE_RE.match(resolved)
+                env_header = _ENV_VAR_RE.fullmatch(resolved)
                 if env_header:
                     env_http_headers[h_name] = env_header.group(1)
                     continue
@@ -343,9 +342,11 @@ class CodexClientAdapter(MCPClientAdapter):
                     continue
                 http_headers[h_name] = resolved
             if unsupported_headers:
+                safe_headers = ", ".join(ascii(name)[1:-1] for name in unsupported_headers)
+                safe_server = ascii(server_name)[1:-1]
                 _rich_warning(
-                    f"Skipping header(s) {', '.join(unsupported_headers)} of MCP server "
-                    f"'{server_name}' for Codex CLI: Codex reads a header from the "
+                    f"Skipping header(s) {safe_headers} of MCP server "
+                    f"'{safe_server}' for Codex CLI: Codex reads a header from the "
                     "environment only when the value is exactly ${VAR} or, for "
                     "Authorization, `Bearer ${VAR}`. Literal text around the "
                     "reference, or a shell-style default such as ${VAR:-}, has no "

@@ -675,7 +675,9 @@ Values in `headers` and `env` may contain three placeholder syntaxes. APM resolv
 - **Registry-backed servers** - APM auto-generates input prompts from registry metadata only for required variables. Optional variables do not generate prompts or runtime config entries when no value is available. If a user has already edited an optional value in runtime config, reinstall preserves that value rather than overwriting it.
 - **Self-defined servers** - APM detects `${input:...}` patterns in `apm.yml` and generates matching input definitions automatically.
 
-GitHub Actions templates (`${{ ... }}`) are intentionally left untouched.
+APM does not evaluate GitHub Actions templates (`${{ ... }}`). Codex skips remote headers containing them with a warning.
+
+**Existing Codex configurations:** An unchanged `apm install` preserves an already-configured server, including literal placeholders written by older APM versions. For an APM-managed server, switch its header declaration between the equivalent `${VAR}` and `${env:VAR}` spellings, then rerun the original install command with the same scope and targets. This intentional declaration change reapplies the affected server; review and back up any manual edits to that entry first. Unrelated servers and settings are preserved.
 
 ```yaml
 dependencies:
