@@ -472,14 +472,19 @@ def test_partial_updates_preserve_transport(
     update: dict,
     expected: dict,
 ) -> None:
-    """An update omitting its transport keeps compatible connection fields."""
+    """Partial and repeated writes preserve compatible fields and their order."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / ".claude").mkdir()
     adapter = ClaudeClientAdapter(project_root=tmp_path, user_scope=user_scope)
     assert adapter.update_config({"srv": previous}) is True
+    config_path = Path(adapter.get_config_path())
+    initial_bytes = config_path.read_bytes()
+    assert adapter.update_config({"srv": previous}) is True
+    assert config_path.read_bytes() == initial_bytes
     assert adapter.update_config({"srv": update}) is True
-    document = json.loads(Path(adapter.get_config_path()).read_text(encoding="utf-8"))
+    document = json.loads(config_path.read_text(encoding="utf-8"))
     assert document["mcpServers"]["srv"] == expected
+    assert tuple(document["mcpServers"]["srv"]) == tuple(expected)
 
 
 class TestMCPIntegratorClaudeStaleCleanup(unittest.TestCase):

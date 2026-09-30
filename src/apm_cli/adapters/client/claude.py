@@ -139,11 +139,13 @@ class ClaudeClientAdapter(CopilotClientAdapter):
         declares_transport = any(new_cfg.get(key) for key in ("type", "url", "command"))
         is_remote = cls._is_remote_mcp_entry(new_cfg if declares_transport else prev)
         stale = cls._STDIO_TRANSPORT_KEYS if is_remote else cls._REMOTE_TRANSPORT_KEYS
-        retained = {key: value for key, value in prev.items() if key not in stale}
         compatible_types = cls._REMOTE_TYPES if is_remote else ("local", "stdio")
-        if "type" not in new_cfg and prev.get("type") in compatible_types:
-            retained["type"] = prev["type"]
-        return retained
+        # Keep a compatible type in place so repeated writes retain field order.
+        return {
+            key: value
+            for key, value in prev.items()
+            if key not in stale or (key == "type" and value in compatible_types)
+        }
 
     @classmethod
     def _merge_mcp_server_dicts(cls, existing_servers: dict, config_updates: dict) -> None:
